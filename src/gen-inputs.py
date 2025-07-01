@@ -88,7 +88,7 @@ def _subset_arrays(stim_arr, y_arr, y_labels, x_arr, x_labels, cv_strategy="imag
     sort_idx = np.argsort(stim_arr[y_mask])
 
     # reshape according to cv_strategy
-    if cv_strategy is "image":
+    if cv_strategy == "image":
         rep_y_arr = np.reshape(
             y_arr[y_mask][sort_idx], (3, n_unique // 3, y_arr.shape[-1]), order="F"
         )
@@ -159,7 +159,7 @@ def _gen_splits(stim_vec, y_matrix, X_matrix, cv_strategy, sub_name, roi, seed):
     rng = np.random.default_rng(seed=seed)
 
     # define splits according to cv_strategy
-    if cv_strategy is "image":
+    if cv_strategy == "image":
         idx = list(range(stim_vec.shape[-1]))
         permute_idx = rng.permuted(idx, axis=None)
 
