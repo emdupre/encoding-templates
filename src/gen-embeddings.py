@@ -1,47 +1,64 @@
+import click
 import torch
 from thingsvision import get_extractor
 from thingsvision.utils.storing import save_features
 from thingsvision.utils.data import ImageDataset, DataLoader
 
-model_name = "clip"
-source = "custom"
-device = "cuda" if torch.cuda.is_available() else "cpu"
-model_parameters = {"variant": "RN50"}
-batch_size = 32
 
-extractor = get_extractor(
-    model_name=model_name,
-    source=source,
-    device=device,
-    pretrained=True,
-    model_parameters=model_parameters,
+@click.command()
+@click.option(
+    "--input_dir",
+    default="/Users/emdupre/Desktop/things-encode/cneuromod.things.stimuli/",
+    help="Input directory with stimuli.",
 )
-
-dataset = ImageDataset(
-    root="/Users/emdupre/Desktop/things-encode/cneuromod.things.stimuli/",
-    out_path="/Users/emdupre/Desktop/things-encode/clip-features/",
-    backend=extractor.get_backend(),
-    transforms=extractor.get_transformations(),
+@click.option(
+    "--output_dir",
+    default="/Users/emdupre/Desktop/things-encode/clip-features/",
+    help="Region-of-interest",
 )
+def main(input_dir, output_dir):
+    """
+    Generate CLIP embeddings of provided stimuli
+    """
+    model_name = "clip"
+    source = "custom"
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model_parameters = {"variant": "RN50"}
+    batch_size = 32
 
-batches = DataLoader(
-    dataset=dataset,
-    batch_size=batch_size,
-    backend=extractor.get_backend(),  # backend framework of model
-)
+    extractor = get_extractor(
+        model_name=model_name,
+        source=source,
+        device=device,
+        pretrained=True,
+        model_parameters=model_parameters,
+    )
 
-module_name = "visual"
+    dataset = ImageDataset(
+        root=input_dir,
+        out_path=output_dir,
+        backend=extractor.get_backend(),
+        transforms=extractor.get_transformations(),
+    )
 
-features = extractor.extract_features(
-    batches=batches,
-    module_name=module_name,
-    flatten_acts=True,  # flatten 2D feature maps from an early convolutional or attention layer
-    output_type="ndarray",  # or "tensor" (only applicable to PyTorch models of which CLIP is one!)
-)
+    batches = DataLoader(
+        dataset=dataset,
+        batch_size=batch_size,
+        backend=extractor.get_backend(),  # backend framework of model
+    )
 
-# file_format can be set to "npy", "txt", "mat", "pt", or "hdf5"
-save_features(
-    features,
-    out_path="/Users/emdupre/Desktop/things-encode/clip-features/",
-    file_format="npy",
-)
+    module_name = "visual"
+
+    features = extractor.extract_features(
+        batches=batches,
+        module_name=module_name,
+        flatten_acts=True,  # flatten 2D feature maps from an early convolutional or attention layer
+        output_type="ndarray",  # or "tensor" (only applicable to PyTorch models of which CLIP is one!)
+    )
+
+    # file_format can be set to "npy", "txt", "mat", "pt", or "hdf5"
+    save_features(
+        features,
+        out_path=output_dir,
+        file_format="npy",
+    )
