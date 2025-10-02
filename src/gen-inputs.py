@@ -1,4 +1,3 @@
-import random
 from pathlib import Path
 
 import h5py
@@ -6,30 +5,7 @@ import click
 import numpy as np
 import pandas as pd
 import nibabel as nib
-from nilearn import input_data, masking
-
-
-def _check_mem_cond(row):
-    """
-    # TODO : Double-check that these are being correctly generated
-    """
-    # sanitize inputs
-    subcondition = row["subcondition"].strip()
-    if subcondition == "unseen-between":
-        cond = "across_sess"
-    elif subcondition == "seen-between":
-        cond = "within_sess"
-    elif subcondition == "unseen-within":
-        cond = "within_sess"
-    elif subcondition == "seen-within":
-        cond = "within_sess"
-    elif subcondition == "seen-between-within":
-        cond = "within_sess"
-    elif subcondition == "seen-within-between":
-        cond = "across_sess"
-    else:
-        cond = pd.NA
-    return cond
+from nilearn import maskers, masking
 
 
 def _subset_arrays(stim_arr, y_arr, y_labels, x_arr, x_labels, cv_strategy="image"):
@@ -130,172 +106,6 @@ def _subset_arrays(stim_arr, y_arr, y_labels, x_arr, x_labels, cv_strategy="imag
     return incl_labels, rep_y_arr, rep_y_labels, x_arr
 
 
-def _gen_splits(stim_vec, y_matrix, X_matrix, cv_strategy, sub_name, roi, seed):
-    """
-    Parameters
-    ----------
-    stim_vec : np.arr or list
-        Shape (n_stim, )
-    y_matrix : np.arr or list
-        Shape (n_stim, n_features)
-    X_matrix : np.arr or list
-        Shape (n_stim, dim_clip_embed)
-    cv_strategy : str
-        Strategy for cross-validation. Must be in ["image", "session", "category"].
-        Note that "session" will divide stimulus repeats s.t. across-session repeats
-        are used for cross-validation, "category" will divide images such that images
-        from the same semantic category are retained within cross-validation folds,
-        and "image" will keep only individual image repetitions within folds,
-        ignoring session effects and category information across folds.
-    sub_name : str
-        Subject name. Must be in ["sub-01", "sub-02", "sub-03", "sub-06"]
-    roi : str
-        Region-of-Interest name. Must be in
-        [None, "EBA", "FFA", "OFA", "pSTS", "MPA", "OPA", "PPA"]
-        where None indicates whole brain.
-    seed : int
-        Seed for random number generator.
-    """
-    rng = np.random.default_rng(seed=seed)
-
-    # define splits according to cv_strategy
-    if cv_strategy == "image":
-        idx = list(range(stim_vec.shape[-1]))
-        permute_idx = rng.permuted(idx, axis=None)
-
-        # hardcode indices so train and valid match across subjects
-        train_idx = permute_idx[:3570]
-        valid_idx = permute_idx[3570:3780]
-        test_idx = permute_idx[3780:]
-
-        modes = {"train": train_idx, "valid": valid_idx, "test": test_idx}
-        for mode, mode_idx in modes.items():
-            np.savetxt(
-                f"{sub_name}_{mode}_cv-image_trialwise_image_names.txt",
-                stim_vec[mode_idx],
-                fmt="%s",
-            )
-            np.save(
-                f"{sub_name}_{mode}_cv-image_trialwise_clip_embeddings.npy",
-                X_matrix[mode_idx],
-            )
-
-            if roi is not None:
-                np.save(
-                    f"{sub_name}_{mode}_cv-image_trialwise_{roi}_responses.npy",
-                    y_matrix[:, mode_idx],
-                )
-            elif roi is None:
-                np.save(
-                    f"{sub_name}_{mode}_cv-image_trialwise_responses.npy",
-                    y_matrix[:, mode_idx],
-                )
-
-    if cv_strategy == "session":
-        idx = list(range(stim_vec.shape[-1]))
-        permute_idx = rng.permuted(idx, axis=None)
-        # across_sess, within_sess = np.split(y_matrix, [1], axis=0)
-
-        # hardcode indices so train and valid match across subjects
-        train_idx = permute_idx[:3570]
-        valid_idx = permute_idx[3570:3780]
-        test_idx = permute_idx[3780:]
-
-        modes = {"train": train_idx, "valid": valid_idx, "test": test_idx}
-        for mode, mode_idx in modes.items():
-            np.savetxt(
-                f"{sub_name}_{mode}_cv-across_trialwise_image_names.txt",
-                stim_vec[mode_idx],
-                fmt="%s",
-            )
-            np.save(
-                f"{sub_name}_{mode}_cv-across_trialwise_clip_embeddings.npy",
-                X_matrix[mode_idx],
-            )
-
-            np.savetxt(
-                f"{sub_name}_{mode}_cv-within_trialwise_image_names.txt",
-                stim_vec[mode_idx],
-                fmt="%s",
-            )
-            np.save(
-                f"{sub_name}_{mode}_cv-within_trialwise_clip_embeddings.npy",
-                X_matrix[mode_idx],
-            )
-
-            if roi is not None:
-                np.save(
-                    f"{sub_name}_{mode}_cv-across_trialwise_{roi}_responses.npy",
-                    y_matrix[:2, mode_idx],
-                )
-                np.save(
-                    f"{sub_name}_{mode}_cv-within_trialwise_{roi}_responses.npy",
-                    y_matrix[1:, mode_idx],
-                )
-            elif roi is None:
-                np.save(
-                    f"{sub_name}_{mode}_cv-across_trialwise_responses.npy",
-                    y_matrix[:2, mode_idx],
-                )
-                np.save(
-                    f"{sub_name}_{mode}_cv-within_trialwise_responses.npy",
-                    y_matrix[1:, mode_idx],
-                )
-
-    if cv_strategy == "category":
-        # variable naming is misleading ; we're actually passing lists,
-        # one entry for each category. Need to shuffle differently
-        random.seed(seed)
-
-        c = list(zip(stim_vec, y_matrix, X_matrix))
-        random.shuffle(c)
-        stim_vec, y_matrix, X_matrix = zip(*c)
-
-        # Take 85%, 5%, and 10% of 720 categories to match other split schemes.
-        # hardcoded indices are safe since we know all subjects saw all categ.
-        idx = slice(None)
-        train_idx = slice(0, 612)
-        valid_idx = slice(612, 648)
-        test_idx = slice(648, 720)
-
-        modes = {"train": train_idx, "valid": valid_idx, "test": test_idx}
-        for mode, mode_idx in modes.items():
-            shuffled_stim = np.hstack(stim_vec[mode_idx])
-            shuffled_x = np.vstack(X_matrix[mode_idx])
-            shuffled_y = np.vstack(y_matrix[mode_idx])
-
-            # reshape when saving out to match (repeat, unique_stim, dim) structure
-            n_unique = np.unique(shuffled_stim).shape[0]
-
-            np.savetxt(
-                f"{sub_name}_{mode}_cv-categ_trialwise_image_names.txt",
-                np.reshape(shuffled_stim, (3, n_unique), order="F"),
-                fmt="%s",
-            )
-            np.save(
-                f"{sub_name}_{mode}_cv-categ_trialwise_clip_embeddings.npy",
-                np.reshape(
-                    shuffled_x, (3, n_unique, np.shape(shuffled_x)[-1]), order="F"
-                ),
-            )
-
-            if roi is not None:
-                np.save(
-                    f"{sub_name}_{mode}_cv-categ_trialwise_{roi}_responses.npy",
-                    np.reshape(
-                        shuffled_y, (3, n_unique, np.shape(shuffled_y)[-1]), order="F"
-                    ),
-                )
-            elif roi is None:
-                np.save(
-                    f"{sub_name}_{mode}_cv-categ_trialwise_responses.npy",
-                    np.reshape(
-                        shuffled_y, (3, n_unique, np.shape(shuffled_y)[-1]), order="F"
-                    ),
-                )
-    return
-
-
 @click.command()
 @click.option("--sub_name", default="sub-01", help="Subject name.")
 @click.option("--roi", default=None, help="Region-of-interest")
@@ -343,7 +153,7 @@ def main(sub_name, roi, seed, cv_strategy, data_dir):
         # FFA ROI raises concern on visual inspection
         # (e.g., left FFA is two disconnected pieces of cortex).
         # Worth re-visiting processing steps.
-        masker = input_data.NiftiMasker(mask_img=roi_nii).fit()
+        masker = maskers.NiftiMasker(mask_img=roi_nii).fit()
 
     clip_feats = np.load(Path(data_dir, "clip-features", "features.npy"))
     clip_fnames = np.genfromtxt(
@@ -358,8 +168,7 @@ def main(sub_name, roi, seed, cv_strategy, data_dir):
     # subset_idx = None
     y_vals = []
     stim_names = []
-    memory_conds = []
-    # session_labels = []
+    session_labels = []
 
     for _, row in annot_df.iterrows():
         # this is ugly, but we know that sessions are always labeled ses-???
@@ -386,26 +195,18 @@ def main(sub_name, roi, seed, cv_strategy, data_dir):
         y_vals.append(func_beta.squeeze())
 
         stim_names.append(row["image_name"])
-        # session_labels.append(row["session"])
-        memory_conds.append(_check_mem_cond(row))
+        session_labels.append(row["session"])
 
-    stim_vec, y_matrix, _, X_matrix = _subset_arrays(
+    stim_vec, y_matrix, y_sessions, X_matrix = _subset_arrays(
         stim_names,
         y_vals,
-        memory_conds,
+        session_labels,
         clip_feats,
         clip_fnames,
         cv_strategy=cv_strategy,
     )
-    _gen_splits(
-        stim_vec,
-        y_matrix,
-        X_matrix,
-        cv_strategy=cv_strategy,
-        sub_name=sub_name,
-        roi=roi,
-        seed=seed,
-    )
+
+    return stim_vec, y_matrix, y_sessions, X_matrix
 
 
 if __name__ == "__main__":
