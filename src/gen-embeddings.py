@@ -8,13 +8,13 @@ from thingsvision.utils.data import ImageDataset, DataLoader
 @click.command()
 @click.option(
     "--input_dir",
-    default="/Users/emdupre/Desktop/things-encode/cneuromod.things.stimuli/",
+    default="./things.stimuli/",
     help="Input directory with stimuli.",
 )
 @click.option(
     "--output_dir",
-    default="/Users/emdupre/Desktop/things-encode/clip-features/",
-    help="Region-of-interest",
+    default="./things.stimuli/stimuli.clip-features/",
+    help="Output directory for CLIP embeddings",
 )
 def main(input_dir, output_dir):
     """
