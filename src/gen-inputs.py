@@ -149,9 +149,12 @@ def _clean_inputs(stim_arr, y_arr, y_labels, x_arr, x_labels, cv_strategy="image
     x_unique, _ = np.unique(sorted_stim, return_inverse=True)
     assert np.all(x_unique == incl_labels)  # quick sanity check
 
+    n_repeats = len(sorted_stim) // len(x_unique)
+    assert n_repeats == 3  # another quick qa
+
     incl_y_arr = y_arr[y_mask][sort_idx]
     incl_y_labels = y_labels[y_mask][sort_idx]
-    incl_x_arr = x_arr[x_mask]
+    incl_x_arr = np.repeat(x_arr[x_mask], n_repeats, axis=0)
 
     # reshape according to cv_strategy
     if cv_strategy == "image":
