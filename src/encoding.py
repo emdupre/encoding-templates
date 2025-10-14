@@ -1,16 +1,15 @@
 from pathlib import Path
-from collections import defaultdict
 
 import click
 import scipy
 import sklearn
 import numpy as np
-from sklearn import pipeline
 from himalaya.ridge import RidgeCV
 from himalaya.backend import set_backend
+from himalaya.scoring import correlation_score
 from sklearn.preprocessing import StandardScaler
-from himalaya.scoring import correlation_score, r2_score
-from sklearn.model_selection import GroupKFold, GridSearchCV, cross_validate
+from sklearn.metrics import make_scorer, r2_score
+from sklearn.model_selection import GroupKFold, cross_validate, LeaveOneOut
 
 
 backend = set_backend("torch_cuda", on_error="warn")
@@ -48,9 +47,7 @@ def explainable_variance(data, bias_correction=True, do_zscore=True):
     return ev
 
 
-def ridgeCV_model(
-    X_matrix, y_matrix, groups=None, scoring=r2_score, inner_cv=True, inner_groups=None
-):
+def ridgeCV_model(X_matrix, y_matrix, groups=None, scoring_metric=r2_score):
     """
     Parameters
     ----------
@@ -66,15 +63,7 @@ def ridgeCV_model(
         Expected shape (n_samples, )
     scoring : Callable
         Scoring function for estimator predictions.
-    inner_cv : Bool
-        Whether or not to perform nested cross-validation
-    inner_groups : np.arr, Optional
-        If performing nested cross-validation, group labels for inner_cv,
-        corresponding to scanning session.
-        Expected shape  of (n_samples, n_repeats)
     """
-    # scores = defaultdict(list)
-
     scaler = StandardScaler(with_mean=True, with_std=False)
     scaler.fit_transform(X_matrix)
     scaler.fit_transform(y_matrix)
@@ -83,39 +72,23 @@ def ridgeCV_model(
     alphas = np.logspace(1, 20, 20)
     estimator = RidgeCV(
         alphas=alphas,
-        cv=outer_cv,
+        cv=LeaveOneOut,
         solver_params=dict(
             n_targets_batch=500, n_alphas_batch=5, n_targets_batch_refit=100
         ),
     )
+    scorer = make_scorer(scoring_metric)
+    sklearn.set_config(enable_metadata_routing=True)
 
-    if inner_cv:
-        inner_cv = GroupKFold()
-        if inner_groups is None:
-            raise ValueError("Must provide inner_groups to use inner_cv")
-
-        for train, test in outer_cv.split(X_matrix, y_matrix, groups=groups):
-            pass
-
-    else:
-        sklearn.set_config(enable_metadata_routing=True)
-        scores = cross_validate(
-            estimator,
-            X_matrix,
-            y=y_matrix,
-            cv=outer_cv,
-            # groups=groups,
-            scoring=scoring,
-            error_score="raise",
-            params={"groups": groups},
-        )
-        # for train, test in outer_cv.split(X_matrix, y_matrix, groups=groups):
-        #     # pl.set_params(ridgecv__cv_groups=groups[train])
-        #     pl.fit(X_matrix[train], y_matrix[train])
-        #     fold_score = pl.score(X_matrix[test], y_matrix[test])
-        #     fold_alphas = pl[-1].best_alphas_
-        #     scores["fold_score"].append(fold_score)
-        #     scores["fold_alpha"].append(fold_alphas)
+    scores = cross_validate(
+        estimator,
+        X_matrix,
+        y=y_matrix,
+        cv=outer_cv,
+        scoring=scorer,
+        error_score="raise",
+        params={"groups": groups},
+    )
     return scores
 
 
@@ -135,12 +108,12 @@ def ridgeCV_model(
     help="Data directory.",
 )
 @click.option(
-    "--inner_cv",
-    is_flag=True,
-    help="Whether or not to run nested cross-validation, "
-    "cross-validating session number in inner CV.",
+    "--scoring_metric",
+    default="r2_score",
+    # help="Whether or not to run nested cross-validation, "
+    # "cross-validating session number in inner CV.",
 )
-def main(sub_name, roi, cv_strategy, average, data_dir, inner_cv=True):
+def main(sub_name, roi, cv_strategy, average, data_dir, scoring_metric):
     """ """
     rois = [None, "EBA", "FFA", "OFA", "pSTS", "MPA", "OPA", "PPA"]
     if roi not in rois:
@@ -161,6 +134,16 @@ def main(sub_name, roi, cv_strategy, average, data_dir, inner_cv=True):
         err_msg = "Cross-validation strategy 'image' is not compatible with 'average'"
         raise ValueError(err_msg)
 
+    scoring_metrics = ["r2_score", "correlation_score"]
+    if scoring_metric not in scoring_metrics:
+        err_msg = "Unrecognized scoring metric {scoring_metric}"
+        raise ValueError(err_msg)
+
+    if scoring_metric == "r2_score":
+        scoring = r2_score
+    if scoring_metric == "correlation_score":
+        scoring = correlation_score
+
     # TODO: Remove this when tested
     if roi is not None:
         raise NotImplementedError
@@ -168,9 +151,12 @@ def main(sub_name, roi, cv_strategy, average, data_dir, inner_cv=True):
     groups = np.loadtxt(
         Path(data_dir, f"{sub_name}_{cv_strategy}_outerCV_groups.txt"), dtype=np.str_
     )
+    ####################################
+    # FIXME
     inner_groups = np.loadtxt(
         Path(data_dir, f"{sub_name}_innerCV_groups.txt"), dtype=np.str_
     )
+    ####################################
     X_matrix = np.load(Path(data_dir, f"{sub_name}_stim_features.npy"))
     if roi is not None:
         y_matrix = np.load(Path(data_dir, f"{sub_name}_{roi}_brain_responses.npy"))
@@ -178,23 +164,12 @@ def main(sub_name, roi, cv_strategy, average, data_dir, inner_cv=True):
         y_matrix = np.load(Path(data_dir, f"{sub_name}_brain_responses.npy"))
 
     if average:
-        # cannot use inner CV when averaging
-        inner_cv = False
-        inner_groups = None
-
         # NOTE: shapes hard-coded for three repetitions, 4174 images, THINGS dataset
         groups = groups[::3]
         X_matrix = X_matrix[::3]
         y_matrix = np.mean(y_matrix.reshape(len(groups), 3, y_matrix.shape[-1]), axis=1)
 
-    scores = ridgeCV_model(
-        X_matrix,
-        y_matrix,
-        groups=groups,
-        scoring=r2_score,
-        inner_cv=inner_cv,
-        inner_groups=inner_groups,
-    )
+    scores = ridgeCV_model(X_matrix, y_matrix, groups=groups, scoring=scoring)
 
     np.save(f"{sub_name}_cv-{cv_strategy}_r2_scores_clip.npy", scores.cpu())
 
