@@ -11,13 +11,54 @@ from nilearn import masking
 import matplotlib.pyplot as plt
 from sklearn.pipeline import make_pipeline
 from himalaya.scoring import correlation_score
-from himalaya.viz import plot_alphas_diagnostic
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import make_scorer, r2_score
 from sklearn.model_selection import GroupKFold, cross_validate
 
 
 os.environ["PATH"] += ":/Applications/Inkscape.app/Contents/MacOS/"
+
+
+def plot_alphas_diagnostic(best_alphas, alphas, cv_fold=None, ax=None):
+    """
+    Adapted from gallantlab/himalaya
+    BSD 3-Clause License
+    Copyright (c) 2020, the himalaya developers All rights reserved.
+
+    Plot a diagnostic plot for the selected alphas during cross-validation.
+
+    To figure out whether to increase the range of alphas.
+
+    Parameters
+    ----------
+    best_alphas : array of shape (n_targets, )
+        Alphas selected during cross-validation for each target.
+    alphas : array of shape (n_alphas)
+        Alphas used while fitting the model.
+    cv_fold : int or None
+        Outer cross-validation fold, for labelling
+    ax : None or figure axis
+
+    Returns
+    -------
+    ax : figure axis
+    """
+    alphas = np.sort(alphas)
+    n_alphas = len(alphas)
+    indices = np.argmin(np.abs(best_alphas[None] - alphas[:, None]), 0)
+    hist = np.bincount(indices, minlength=n_alphas)
+
+    if ax is None:
+        fig, ax = plt.subplots(1, 1)
+
+    log10alphas = np.log(alphas) / np.log(10)
+    ax.plot(log10alphas, hist, ".-", markersize=12, label=f"Outer-CV fold {cv_fold}")
+    ax.set_ylabel("Number of targets")
+    ax.set_xlabel("log10(alpha)")
+    if cv_fold is not None:
+        ax.legend()
+    ax.grid("on")
+    return ax
 
 
 def plot_flatmap(metric, mask, sub_name):
@@ -52,14 +93,20 @@ def plot_flatmap(metric, mask, sub_name):
     plt.show()
 
 
-def plot_voxel_hist(sub_name, expl_var, scores, scoring_metric=r2_score):
-    """
+def plot_voxel_hist(sub_name, expl_var, scores, scoring_metric="r2_score"):
+    r"""
     Parameters
     ----------
-    expl_var : np.arr
-    scores : np.arr
-        Scores
     sub_name : str
+        Subject name
+    expl_var : np.arr
+        Explainable variance, as calculated using
+        .. math::
+            \\frac{1}{N}\\sum_{i=1}^N\\text{Var}(y_i) - \\frac{N}{N-1}\\sum_{i=1}^N\\text{Var}(r_i)
+    scores : np.arr
+        Scores from the encoding model calculated using the scoring metric
+    scoring_metric : str
+        Scoring metric used in encoding model scoring, must be 'r2_score' or 'correlation_score'
     """
     fig = plt.subplot()
     fig.hist(
@@ -75,7 +122,7 @@ def plot_voxel_hist(sub_name, expl_var, scores, scoring_metric=r2_score):
         log=True,
         histtype="step",
         label=(
-            "$R^2$ values" if (scoring_metric is r2_score) else "Correlation values"
+            "$R^2$ values" if (scoring_metric == "r2_score") else "Correlation values"
         ),
     )
     fig.ylabel("Number of voxels")
@@ -92,6 +139,10 @@ def plot_voxel_hist(sub_name, expl_var, scores, scoring_metric=r2_score):
 
 def explainable_variance(data, bias_correction=True, do_zscore=True):
     """
+    Adapted from gallantlab/himalaya
+    BSD 3-Clause License
+    Copyright (c) 2020, the himalaya developers All rights reserved.
+
     Compute explainable variance for a set of voxels.
 
     Parameters
@@ -126,7 +177,7 @@ def explainable_variance(data, bias_correction=True, do_zscore=True):
     return expl_var
 
 
-def ridgeCV_sklearn(X_matrix, y_matrix, groups=None, scoring_metric=r2_score):
+def ridgeCV_sklearn(X_matrix, y_matrix, groups=None, scoring=r2_score):
     """
     Parameters
     ----------
@@ -156,7 +207,7 @@ def ridgeCV_sklearn(X_matrix, y_matrix, groups=None, scoring_metric=r2_score):
         alpha_per_target=True,
         cv=None,
     )
-    scorer = make_scorer(scoring_metric)
+    scorer = make_scorer(scoring)
     sklearn.set_config(enable_metadata_routing=True)
 
     scores = cross_validate(
@@ -173,7 +224,7 @@ def ridgeCV_sklearn(X_matrix, y_matrix, groups=None, scoring_metric=r2_score):
     return scores
 
 
-def ridgeCV_himalaya(X_matrix, y_matrix, groups=None, scoring_metric=r2_score):
+def ridgeCV_himalaya(X_matrix, y_matrix, groups=None, scoring=r2_score):
     """
     Parameters
     ----------
@@ -197,7 +248,7 @@ def ridgeCV_himalaya(X_matrix, y_matrix, groups=None, scoring_metric=r2_score):
 
     scores = defaultdict()
     train_indices, test_indices = [], []
-    cv_results = []
+    best_scores = []
     best_alphas = []
 
     outer_cv = GroupKFold()
@@ -219,16 +270,18 @@ def ridgeCV_himalaya(X_matrix, y_matrix, groups=None, scoring_metric=r2_score):
 
         pl.fit(X_matrix[train_index], y_matrix[train_index])
 
-        if scoring_metric is correlation_score:
+        if scoring is correlation_score:
             y_pred = pl.predict(X_matrix[test_index])
-            cv_results.append(correlation_score(y_matrix[test_index], y_pred))
+            best_scores.append(correlation_score(y_matrix[test_index], y_pred).cpu())
         else:
-            cv_results.append(pl.score(X_matrix[test_index], y_matrix[test_index]))
+            best_scores.append(
+                pl.score(X_matrix[test_index], y_matrix[test_index]).cpu()
+            )
 
         best_alphas.append(pl[-1].best_alphas_)
 
     scores["best_alphas"] = best_alphas
-    scores["cv_results"] = cv_results
+    scores["best_scores"] = best_scores
     scores["indices"] = {"train": train_indices, "test": test_indices}
 
     return scores
@@ -324,21 +377,30 @@ def main(sub_name, roi, cv_strategy, scoring_metric, average, data_dir, engine):
 
     if engine == "sklearn":
         scores = ridgeCV_sklearn(X_matrix, y_matrix, groups=groups, scoring=scoring)
+        best_alphas = [estim.alpha_ for estim in scores["estimator"]]
+        best_scores = [estim.best_score_ for estim in scores["estimator"]]
     elif engine == "himalaya":
         scores = ridgeCV_himalaya(X_matrix, y_matrix, groups=groups, scoring=scoring)
+        best_alphas = scores["best_alphas"]
+        best_scores = scores["best_scores"]
 
-    np.save(f"{sub_name}_cv-{cv_strategy}_r2_scores_clip.npy", scores.cpu())
-
-    fig_alphas = plot_alphas_diagnostic(
-        best_alphas=scores["best_alphas"], alphas=np.logspace(1, 20, 20)
-    )
+    np.save(f"{sub_name}_cv-{cv_strategy}_r2_scores_clip.npy")
 
     expl_var = explainable_variance(y_matrix)
     fig_hist = plot_voxel_hist(
         sub_name, expl_var, scores["cv_results"], scoring_metric=r2_score
     )
+    fig_hist.savefig(f"{sub_name}_{cv_strategy}_{scoring_metric}_expl_var_hist.png")
 
-    fig_flat = plot_flatmap()
+    fig_alphas, ax = plt.subplots(1, 1)
+    for i, b_alpha in enumerate(best_alphas):
+        plot_alphas_diagnostic(
+            best_alphas=b_alpha, alphas=np.logspace(1, 20, 20), cv_fold=i, ax=ax
+        )
+    fig_alphas.savefig(f"{sub_name}_{cv_strategy}_alphas.png")
+
+    # fig_flat = plot_flatmap()
+    # fig_flat.savefig(f"{sub_name}_{cv_strategy}_{scoring_metric}_flatmap.png")
 
 
 if __name__ == "__main__":
