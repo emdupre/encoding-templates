@@ -7,6 +7,7 @@ import scipy
 import cortex
 import sklearn
 import numpy as np
+from cortex import db
 from nilearn import masking
 import matplotlib.pyplot as plt
 from sklearn.pipeline import make_pipeline
@@ -17,6 +18,49 @@ from sklearn.model_selection import GroupKFold, cross_validate
 
 
 os.environ["PATH"] += ":/Applications/Inkscape.app/Contents/MacOS/"
+
+
+def plot_flatmap(
+    best_scores, sub_name, mask_img, cv_strategy, scoring_metric="r2_score"
+):
+    """
+    Parameters
+    ----------
+    nii : nib.Nifti
+        voxel-wise data to project to flatmap
+    sub_name : str
+    """
+    lh, rh = cortex.get_hemi_masks(subject=sub_name, xfmname="align_auto")
+    db.save_mask(sub_name, "align_auto", "lh", lh)
+
+    nii = masking.unmask(best_scores, mask_img)
+
+    # https://gallantlab.org/pycortex/auto_examples/datasets/plot_vertex.html
+    nii_vol = cortex.Volume(
+        data=nii.get_fdata().T[rh],
+        subject=sub_name,
+        xfmname="align_auto",
+        # vmin=(np.min(ffx_nii.dataobj) * 0.95),
+        # vmax=(np.max(ffx_nii.dataobj) * 0.95),
+        # cmap="magma",
+    )
+
+    out_name = f"{sub_name}_{cv_strategy}_encoding_{scoring_metric}_flatmap.png"
+    fig = cortex.quickshow(nii_vol, sampler="nearest")
+    cortex.quickflat.make_png(
+        out_name,
+        nii_vol,
+        sampler="trilinear",
+        curv_brightness=1.0,
+        with_colorbar=True,
+        colorbar_location="left",
+        with_curvature=True,
+        with_labels=False,
+        with_rois=True,
+        dpi=300,
+        height=2048,
+    )
+    return fig
 
 
 def plot_alphas_diagnostic(best_alphas, alphas, cv_fold=None, ax=None):
@@ -61,39 +105,9 @@ def plot_alphas_diagnostic(best_alphas, alphas, cv_fold=None, ax=None):
     return ax
 
 
-def plot_flatmap(metric, mask, sub_name):
-    """
-    Parameters
-    ----------
-    metric : np.arr
-    mask : nib.Nifti
-    sub_name : str
-    """
-    nii = masking.unmask(metric, mask)
-    vol = cortex.Volume(
-        data=np.swapaxes(nii.get_fdata(), 0, -1),
-        subject=sub_name,
-        xfmname="align_auto",
-        mask=mask.get_fdata(),
-        vmin=0,
-        vmax=0.30,
-        cmap="magma",
-    )
-    cortex.quickshow(
-        vol,
-        with_colorbar=True,
-        colorbar_location="left",
-        with_curvature=True,
-        sampler="trilinear",
-        with_labels=False,
-        with_rois=True,
-        curv_brightness=1.0,
-        dpi=300,
-    )
-    plt.show()
-
-
-def plot_voxel_hist(sub_name, expl_var, scores, scoring_metric="r2_score"):
+def plot_voxel_hist(
+    sub_name, expl_var, best_scores, scoring_metric="r2_score", ax=None
+):
     r"""
     Parameters
     ----------
@@ -107,17 +121,23 @@ def plot_voxel_hist(sub_name, expl_var, scores, scoring_metric="r2_score"):
         Scores from the encoding model calculated using the scoring metric
     scoring_metric : str
         Scoring metric used in encoding model scoring, must be 'r2_score' or 'correlation_score'
+
+    Returns
+    -------
+    ax : figure axis
     """
-    fig = plt.subplot()
-    fig.hist(
+    if ax is None:
+        fig, ax = plt.subplots(1, 1)
+
+    ax.hist(
         expl_var,
         bins=np.linspace(0, 1, 100),
         log=True,
         histtype="step",
         label="Explainable variance",
     )
-    fig.hist(
-        scores,
+    ax.hist(
+        best_scores,
         bins=np.linspace(0, 1, 100),
         log=True,
         histtype="step",
@@ -125,19 +145,21 @@ def plot_voxel_hist(sub_name, expl_var, scores, scoring_metric="r2_score"):
             "$R^2$ values" if (scoring_metric == "r2_score") else "Correlation values"
         ),
     )
-    fig.ylabel("Number of voxels")
+    ax.set_ylabel("Number of voxels")
 
     if scoring_metric is r2_score:
-        fig.title(f"Histogram of explainable variance and $R^2$ for {sub_name}")
+        ax.set_title(f"Histogram of explainable variance and $R^2$ for {sub_name}")
     else:
-        fig.title(f"Histogram of explainable variance and correlation for {sub_name}")
+        ax.set_title(
+            f"Histogram of explainable variance and correlation for {sub_name}"
+        )
 
-    fig.grid("on")
-    fig.legend()
-    return fig
+    ax.grid("on")
+    ax.legend()
+    return ax
 
 
-def explainable_variance(data, bias_correction=True, do_zscore=True):
+def explainable_variance(y_matrix, bias_correction=True, do_zscore=True):
     """
     Adapted from gallantlab/himalaya
     BSD 3-Clause License
@@ -147,7 +169,7 @@ def explainable_variance(data, bias_correction=True, do_zscore=True):
 
     Parameters
     ----------
-    data : array of shape (n_repeats, n_times, n_voxels)
+    y_matrix : array of shape (n_repeats * n_stimuli, n_voxels)
         fMRI responses of the repeated test set.
     bias_correction: bool
         Perform bias correction based on the number of repetitions.
@@ -162,7 +184,9 @@ def explainable_variance(data, bias_correction=True, do_zscore=True):
     """
     n_repeats = 3  # NOTE : Hard-coded for THINGS dataset
     n_stimuli, n_voxels = data.shape
-    data = data.reshape((n_stimuli // n_repeats, n_repeats, n_voxels)).swapaxes(0, 1)
+    data = y_matrix.reshape((n_stimuli // n_repeats, n_repeats, n_voxels)).swapaxes(
+        0, 1
+    )
 
     if do_zscore:
         data = scipy.stats.zscore(data, axis=1)
@@ -399,8 +423,9 @@ def main(sub_name, roi, cv_strategy, scoring_metric, average, data_dir, engine):
         )
     fig_alphas.savefig(f"{sub_name}_{cv_strategy}_alphas.png")
 
-    # fig_flat = plot_flatmap()
-    # fig_flat.savefig(f"{sub_name}_{cv_strategy}_{scoring_metric}_flatmap.png")
+    fig_flat = plot_flatmap(
+        best_scores, sub_name, mask_img, cv_strategy, scoring_metric="r2_score"
+    )
 
 
 if __name__ == "__main__":
