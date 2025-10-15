@@ -1,15 +1,93 @@
+import os
 from pathlib import Path
 from collections import defaultdict
 
 import click
 import scipy
+import cortex
 import sklearn
 import numpy as np
+from nilearn import masking
+import matplotlib.pyplot as plt
 from sklearn.pipeline import make_pipeline
 from himalaya.scoring import correlation_score
+from himalaya.viz import plot_alphas_diagnostic
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import make_scorer, r2_score
 from sklearn.model_selection import GroupKFold, cross_validate
+
+
+os.environ["PATH"] += ":/Applications/Inkscape.app/Contents/MacOS/"
+
+
+def plot_flatmap(metric, mask, sub_name):
+    """
+    Parameters
+    ----------
+    metric : np.arr
+    mask : nib.Nifti
+    sub_name : str
+    """
+    nii = masking.unmask(metric, mask)
+    vol = cortex.Volume(
+        data=np.swapaxes(nii.get_fdata(), 0, -1),
+        subject=sub_name,
+        xfmname="align_auto",
+        mask=mask.get_fdata(),
+        vmin=0,
+        vmax=0.30,
+        cmap="magma",
+    )
+    cortex.quickshow(
+        vol,
+        with_colorbar=True,
+        colorbar_location="left",
+        with_curvature=True,
+        sampler="trilinear",
+        with_labels=False,
+        with_rois=True,
+        curv_brightness=1.0,
+        dpi=300,
+    )
+    plt.show()
+
+
+def plot_voxel_hist(sub_name, expl_var, scores, scoring_metric=r2_score):
+    """
+    Parameters
+    ----------
+    expl_var : np.arr
+    scores : np.arr
+        Scores
+    sub_name : str
+    """
+    fig = plt.subplot()
+    fig.hist(
+        expl_var,
+        bins=np.linspace(0, 1, 100),
+        log=True,
+        histtype="step",
+        label="Explainable variance",
+    )
+    fig.hist(
+        scores,
+        bins=np.linspace(0, 1, 100),
+        log=True,
+        histtype="step",
+        label=(
+            "$R^2$ values" if (scoring_metric is r2_score) else "Correlation values"
+        ),
+    )
+    fig.ylabel("Number of voxels")
+
+    if scoring_metric is r2_score:
+        fig.title(f"Histogram of explainable variance and $R^2$ for {sub_name}")
+    else:
+        fig.title(f"Histogram of explainable variance and correlation for {sub_name}")
+
+    fig.grid("on")
+    fig.legend()
+    return fig
 
 
 def explainable_variance(data, bias_correction=True, do_zscore=True):
@@ -31,17 +109,21 @@ def explainable_variance(data, bias_correction=True, do_zscore=True):
     ev : array of shape (n_voxels, )
         Explainable variance per voxel.
     """
+    n_repeats = 3  # NOTE : Hard-coded for THINGS dataset
+    n_stimuli, n_voxels = data.shape
+    data = data.reshape((n_stimuli // n_repeats, n_repeats, n_voxels)).swapaxes(0, 1)
+
     if do_zscore:
         data = scipy.stats.zscore(data, axis=1)
 
     mean_var = data.var(axis=1, dtype=np.float64, ddof=1).mean(axis=0)
     var_mean = data.mean(axis=0).var(axis=0, dtype=np.float64, ddof=1)
-    ev = var_mean / mean_var
+    expl_var = var_mean / mean_var
 
     if bias_correction:
         n_repeats = data.shape[0]
-        ev = ev - (1 - ev) / (n_repeats - 1)
-    return ev
+        expl_var = expl_var - (1 - expl_var) / (n_repeats - 1)
+    return expl_var
 
 
 def ridgeCV_sklearn(X_matrix, y_matrix, groups=None, scoring_metric=r2_score):
@@ -246,6 +328,17 @@ def main(sub_name, roi, cv_strategy, scoring_metric, average, data_dir, engine):
         scores = ridgeCV_himalaya(X_matrix, y_matrix, groups=groups, scoring=scoring)
 
     np.save(f"{sub_name}_cv-{cv_strategy}_r2_scores_clip.npy", scores.cpu())
+
+    fig_alphas = plot_alphas_diagnostic(
+        best_alphas=scores["best_alphas"], alphas=np.logspace(1, 20, 20)
+    )
+
+    expl_var = explainable_variance(y_matrix)
+    fig_hist = plot_voxel_hist(
+        sub_name, expl_var, scores["cv_results"], scoring_metric=r2_score
+    )
+
+    fig_flat = plot_flatmap()
 
 
 if __name__ == "__main__":
