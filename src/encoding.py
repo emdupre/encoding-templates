@@ -1,18 +1,15 @@
 from pathlib import Path
+from collections import defaultdict
 
 import click
 import scipy
 import sklearn
 import numpy as np
-from himalaya.ridge import RidgeCV
-from himalaya.backend import set_backend
+from sklearn.pipeline import make_pipeline
 from himalaya.scoring import correlation_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import make_scorer, r2_score
-from sklearn.model_selection import GroupKFold, cross_validate, LeaveOneOut
-
-
-backend = set_backend("torch_cuda", on_error="warn")
+from sklearn.model_selection import GroupKFold, cross_validate
 
 
 def explainable_variance(data, bias_correction=True, do_zscore=True):
@@ -47,7 +44,7 @@ def explainable_variance(data, bias_correction=True, do_zscore=True):
     return ev
 
 
-def ridgeCV_model(X_matrix, y_matrix, groups=None, scoring_metric=r2_score):
+def ridgeCV_sklearn(X_matrix, y_matrix, groups=None, scoring_metric=r2_score):
     """
     Parameters
     ----------
@@ -64,6 +61,8 @@ def ridgeCV_model(X_matrix, y_matrix, groups=None, scoring_metric=r2_score):
     scoring : Callable
         Scoring function for estimator predictions.
     """
+    from sklearn.linear_model import RidgeCV
+
     scaler = StandardScaler(with_mean=True, with_std=False)
     scaler.fit_transform(X_matrix)
     scaler.fit_transform(y_matrix)
@@ -72,10 +71,8 @@ def ridgeCV_model(X_matrix, y_matrix, groups=None, scoring_metric=r2_score):
     alphas = np.logspace(1, 20, 20)
     estimator = RidgeCV(
         alphas=alphas,
-        cv=LeaveOneOut,
-        solver_params=dict(
-            n_targets_batch=500, n_alphas_batch=5, n_targets_batch_refit=100
-        ),
+        alpha_per_target=True,
+        cv=None,
     )
     scorer = make_scorer(scoring_metric)
     sklearn.set_config(enable_metadata_routing=True)
@@ -86,9 +83,72 @@ def ridgeCV_model(X_matrix, y_matrix, groups=None, scoring_metric=r2_score):
         y=y_matrix,
         cv=outer_cv,
         scoring=scorer,
-        error_score="raise",
         params={"groups": groups},
+        return_estimator=True,
+        return_indices=True,
+        error_score="raise",
     )
+    return scores
+
+
+def ridgeCV_himalaya(X_matrix, y_matrix, groups=None, scoring_metric=r2_score):
+    """
+    Parameters
+    ----------
+    X_matrix : np.arr
+        Training data for stimulus embeddings.
+        Expected shape (n_samples, n_features)
+    y_matrix : np.arr
+        Training data for brain responses
+        Expected shape (n_samples, n_features, n_repeats)
+    groups : np.arr
+        Group labels for outer_cv, should correspond to image
+        identity or image category.
+        Expected shape (n_samples, )
+    scoring : Callable
+        Scoring function for estimator predictions.
+    """
+    from himalaya.ridge import RidgeCV
+    from himalaya.backend import set_backend
+
+    backend = set_backend("torch_cuda", on_error="warn")
+
+    scores = defaultdict()
+    train_indices, test_indices = [], []
+    cv_results = []
+    best_alphas = []
+
+    outer_cv = GroupKFold()
+    alphas = np.logspace(1, 20, 20)
+    pl = make_pipeline(
+        StandardScaler(with_mean=True, with_std=False),
+        RidgeCV(
+            alphas=alphas,
+            solver_params=dict(
+                n_targets_batch=500, n_alphas_batch=5, n_targets_batch_refit=100
+            ),
+        ),
+    )
+
+    for train_index, test_index in outer_cv.split(X_matrix, y_matrix, groups):
+
+        train_indices.append(train_index)
+        test_indices.append(test_index)
+
+        pl.fit(X_matrix[train_index], y_matrix[train_index])
+
+        if scoring_metric is correlation_score:
+            y_pred = pl.predict(X_matrix[test_index])
+            cv_results.append(correlation_score(y_matrix[test_index], y_pred))
+        else:
+            cv_results.append(pl.score(X_matrix[test_index], y_matrix[test_index]))
+
+        best_alphas.append(pl[-1].best_alphas_)
+
+    scores["best_alphas"] = best_alphas
+    scores["cv_results"] = cv_results
+    scores["indices"] = {"train": train_indices, "test": test_indices}
+
     return scores
 
 
@@ -96,6 +156,12 @@ def ridgeCV_model(X_matrix, y_matrix, groups=None, scoring_metric=r2_score):
 @click.option("--sub_name", default="sub-01", help="Subject name.")
 @click.option("--roi", default=None, help="Region-of-interest")
 @click.option("--cv_strategy", default="image", help="Cross-validation strategy")
+@click.option(
+    "--scoring_metric",
+    default="r2_score",
+    help="Desired scoring metric. Currently only 'r2_score' and 'correlation_score' "
+    "are supported.",
+)
 @click.option(
     "--average",
     is_flag=True,
@@ -108,26 +174,26 @@ def ridgeCV_model(X_matrix, y_matrix, groups=None, scoring_metric=r2_score):
     help="Data directory.",
 )
 @click.option(
-    "--scoring_metric",
-    default="r2_score",
-    # help="Whether or not to run nested cross-validation, "
-    # "cross-validating session number in inner CV.",
+    "--engine",
+    default="himalaya",
+    help="Engine for running encoding analyses. Must be either 'sklearn' "
+    "or 'himalaya'. Note only the latter is GPU compatiable.",
 )
-def main(sub_name, roi, cv_strategy, average, data_dir, scoring_metric):
+def main(sub_name, roi, cv_strategy, scoring_metric, average, data_dir, engine):
     """ """
     rois = [None, "EBA", "FFA", "OFA", "pSTS", "MPA", "OPA", "PPA"]
     if roi not in rois:
-        err_msg = "Unrecognized ROI {roi}"
+        err_msg = f"Unrecognized ROI {roi}"
         raise ValueError(err_msg)
 
     sub_names = ["sub-01", "sub-02", "sub-03", "sub-06"]
     if sub_name not in sub_names:
-        err_msg = "Unrecognized subject {sub_name}"
+        err_msg = f"Unrecognized subject {sub_name}"
         raise ValueError(err_msg)
 
     cv_strategies = ["image", "category"]
     if cv_strategy not in cv_strategies:
-        err_msg = "Unrecognized cross-validation strategy {cv_strategy}"
+        err_msg = f"Unrecognized cross-validation strategy {cv_strategy}"
         raise ValueError(err_msg)
 
     if average and (cv_strategy == "image"):
@@ -136,7 +202,12 @@ def main(sub_name, roi, cv_strategy, average, data_dir, scoring_metric):
 
     scoring_metrics = ["r2_score", "correlation_score"]
     if scoring_metric not in scoring_metrics:
-        err_msg = "Unrecognized scoring metric {scoring_metric}"
+        err_msg = f"Unrecognized scoring metric {scoring_metric}"
+        raise ValueError(err_msg)
+
+    engines = ["himalaya", "sklearn"]
+    if engine not in engines:
+        err_msg = f"Unrecognized engine {engine}"
         raise ValueError(err_msg)
 
     if scoring_metric == "r2_score":
@@ -169,7 +240,10 @@ def main(sub_name, roi, cv_strategy, average, data_dir, scoring_metric):
         X_matrix = X_matrix[::3]
         y_matrix = np.mean(y_matrix.reshape(len(groups), 3, y_matrix.shape[-1]), axis=1)
 
-    scores = ridgeCV_model(X_matrix, y_matrix, groups=groups, scoring=scoring)
+    if engine == "sklearn":
+        scores = ridgeCV_sklearn(X_matrix, y_matrix, groups=groups, scoring=scoring)
+    elif engine == "himalaya":
+        scores = ridgeCV_himalaya(X_matrix, y_matrix, groups=groups, scoring=scoring)
 
     np.save(f"{sub_name}_cv-{cv_strategy}_r2_scores_clip.npy", scores.cpu())
 
