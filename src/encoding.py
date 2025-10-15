@@ -183,7 +183,7 @@ def explainable_variance(y_matrix, bias_correction=True, do_zscore=True):
         Explainable variance per voxel.
     """
     n_repeats = 3  # NOTE : Hard-coded for THINGS dataset
-    n_stimuli, n_voxels = data.shape
+    n_stimuli, n_voxels = y_matrix.shape
     data = y_matrix.reshape((n_stimuli // n_repeats, n_repeats, n_voxels)).swapaxes(
         0, 1
     )
@@ -423,9 +423,9 @@ def main(sub_name, roi, cv_strategy, scoring_metric, average, data_dir, engine):
         )
     fig_alphas.savefig(f"{sub_name}_{cv_strategy}_alphas.png")
 
-    fig_flat = plot_flatmap(
-        best_scores, sub_name, mask_img, cv_strategy, scoring_metric="r2_score"
-    )
+    # fig_flat = plot_flatmap(
+    #     best_scores, sub_name, mask_img, cv_strategy, scoring_metric="r2_score"
+    # )
 
 
 if __name__ == "__main__":

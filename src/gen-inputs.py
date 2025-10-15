@@ -208,17 +208,17 @@ def main(sub_name, roi, cv_strategy, data_dir):
     """
     rois = [None, "EBA", "FFA", "OFA", "pSTS", "MPA", "OPA", "PPA"]
     if roi not in rois:
-        err_msg = "Unrecognized ROI {roi}"
+        err_msg = f"Unrecognized ROI {roi}"
         raise ValueError(err_msg)
 
     sub_names = ["sub-01", "sub-02", "sub-03", "sub-06"]
     if sub_name not in sub_names:
-        err_msg = "Unrecognized subject {sub_name}"
+        err_msg = f"Unrecognized subject {sub_name}"
         raise ValueError(err_msg)
 
     cv_strategies = ["image", "category"]
     if cv_strategy not in cv_strategies:
-        err_msg = "Unrecognized cross-validation strategy {cv_strategy}"
+        err_msg = f"Unrecognized cross-validation strategy {cv_strategy}"
         raise ValueError(err_msg)
 
     stim_vec, y_matrix, y_sessions, X_matrix = gen_inputs(
