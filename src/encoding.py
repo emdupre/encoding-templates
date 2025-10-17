@@ -14,7 +14,7 @@ from sklearn.pipeline import make_pipeline
 from himalaya.scoring import correlation_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import make_scorer, r2_score
-from sklearn.model_selection import GroupKFold, cross_validate
+from sklearn.model_selection import cross_validate, KFold, GroupKFold
 
 
 os.environ["PATH"] += ":/Applications/Inkscape.app/Contents/MacOS/"
@@ -224,7 +224,10 @@ def ridgeCV_sklearn(X_matrix, y_matrix, groups=None, scoring=r2_score):
     scaler.fit_transform(X_matrix)
     scaler.fit_transform(y_matrix)
 
-    outer_cv = GroupKFold()
+    if groups is None:
+        outer_cv = KFold(shuffle=True, random_state=0)
+    else:
+        outer_cv = GroupKFold(shuffle=True, random_state=0)
     alphas = np.logspace(1, 20, 20)
     estimator = RidgeCV(
         alphas=alphas,
@@ -240,7 +243,7 @@ def ridgeCV_sklearn(X_matrix, y_matrix, groups=None, scoring=r2_score):
         y=y_matrix,
         cv=outer_cv,
         scoring=scorer,
-        params={"groups": groups},
+        params={"groups": groups} if groups is not None else None,
         return_estimator=True,
         return_indices=True,
         error_score="raise",
@@ -275,7 +278,11 @@ def ridgeCV_himalaya(X_matrix, y_matrix, groups=None, scoring=r2_score):
     best_scores = []
     best_alphas = []
 
-    outer_cv = GroupKFold()
+    if groups is None:
+        outer_cv = KFold(shuffle=True, random_state=0)
+    else:
+        outer_cv = GroupKFold(shuffle=True, random_state=0)
+
     alphas = np.logspace(1, 20, 20)
     pl = make_pipeline(
         StandardScaler(with_mean=True, with_std=False),
@@ -296,11 +303,9 @@ def ridgeCV_himalaya(X_matrix, y_matrix, groups=None, scoring=r2_score):
 
         if scoring is correlation_score:
             y_pred = pl.predict(X_matrix[test_index])
-            best_scores.append(correlation_score(y_matrix[test_index], y_pred).cpu())
+            best_scores.append(correlation_score(y_matrix[test_index], y_pred))
         else:
-            best_scores.append(
-                pl.score(X_matrix[test_index], y_matrix[test_index]).cpu()
-            )
+            best_scores.append(pl.score(X_matrix[test_index], y_matrix[test_index]))
 
         best_alphas.append(pl[-1].best_alphas_)
 
@@ -350,7 +355,7 @@ def main(sub_name, roi, cv_strategy, scoring_metric, average, data_dir, engine):
         err_msg = f"Unrecognized subject {sub_name}"
         raise ValueError(err_msg)
 
-    cv_strategies = ["image", "category"]
+    cv_strategies = ["image", "category", "kfold"]
     if cv_strategy not in cv_strategies:
         err_msg = f"Unrecognized cross-validation strategy {cv_strategy}"
         raise ValueError(err_msg)
@@ -378,9 +383,13 @@ def main(sub_name, roi, cv_strategy, scoring_metric, average, data_dir, engine):
     if roi is not None:
         raise NotImplementedError
 
-    groups = np.loadtxt(
-        Path(data_dir, f"{sub_name}_{cv_strategy}_outerCV_groups.txt"), dtype=np.str_
-    )
+    if cv_strategy == "kfold":
+        groups = None
+    else:
+        groups = np.loadtxt(
+            Path(data_dir, f"{sub_name}_{cv_strategy}_outerCV_groups.txt"),
+            dtype=np.str_,
+        )
     ####################################
     # FIXME
     inner_groups = np.loadtxt(
@@ -395,9 +404,12 @@ def main(sub_name, roi, cv_strategy, scoring_metric, average, data_dir, engine):
 
     if average:
         # NOTE: shapes hard-coded for three repetitions, 4174 images, THINGS dataset
-        groups = groups[::3]
+        if groups is not None:
+            groups = groups[::3]
         X_matrix = X_matrix[::3]
-        y_matrix = np.mean(y_matrix.reshape(len(groups), 3, y_matrix.shape[-1]), axis=1)
+        y_matrix = np.mean(
+            y_matrix.reshape(len(X_matrix), 3, y_matrix.shape[-1]), axis=1
+        )
 
     if engine == "sklearn":
         scores = ridgeCV_sklearn(X_matrix, y_matrix, groups=groups, scoring=scoring)
