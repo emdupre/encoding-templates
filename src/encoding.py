@@ -1,4 +1,5 @@
 import os
+import pickle
 from pathlib import Path
 from collections import defaultdict
 
@@ -105,6 +106,15 @@ def plot_alphas_diagnostic(best_alphas, alphas, cv_fold=None, ax=None):
     return ax
 
 
+# # https://stackoverflow.com/questions/15033511/compute-a-confidence-interval-from-sample-data
+# def _mean_confidence_interval(data, confidence=0.95):
+#     a = 1.0 * np.array(data)
+#     n = len(a)
+#     m, se = np.mean(a, axis=0), scipy.stats.sem(a)
+#     h = se * scipy.stats.t.ppf((1 + confidence) / 2.0, n - 1)
+#     return m, m - h, m + h
+
+
 def plot_voxel_hist(
     sub_name, expl_var, best_scores, scoring_metric="r2_score", ax=None
 ):
@@ -136,8 +146,9 @@ def plot_voxel_hist(
         histtype="step",
         label="Explainable variance",
     )
+    # TODO: FIXME
     ax.hist(
-        best_scores,
+        np.mean(best_scores, axis=0),
         bins=np.linspace(0, 1, 100),
         log=True,
         histtype="step",
@@ -147,11 +158,13 @@ def plot_voxel_hist(
     )
     ax.set_ylabel("Number of voxels")
 
-    if scoring_metric is r2_score:
-        ax.set_title(f"Histogram of explainable variance and $R^2$ for {sub_name}")
+    if scoring_metric == "r2_score":
+        ax.set_title(
+            f"Histogram of explainable variance and average $R^2$ for {sub_name}"
+        )
     else:
         ax.set_title(
-            f"Histogram of explainable variance and correlation for {sub_name}"
+            f"Histogram of explainable variance and average correlation for {sub_name}"
         )
 
     ax.grid("on")
@@ -417,15 +430,19 @@ def main(sub_name, roi, cv_strategy, scoring_metric, average, data_dir, engine):
         best_scores = [estim.best_score_ for estim in scores["estimator"]]
     elif engine == "himalaya":
         scores = ridgeCV_himalaya(X_matrix, y_matrix, groups=groups, scoring=scoring)
-        best_alphas = scores["best_alphas"]
-        best_scores = scores["best_scores"]
+        best_alphas = [best_alpha_ for best_alpha_ in scores["best_alphas"]]
+        best_scores = [best_score_ for best_score_ in scores["best_scores"]]
 
-    np.save(f"{sub_name}_cv-{cv_strategy}_r2_scores_clip.npy")
+    out_file = f"{sub_name}_cv-{cv_strategy}_{engine}_scores.pkl"
+    with open(out_file, "wb") as f:
+        pickle.dump(scores, f)
+
+    # to un-pickle
+    # with open(out_file, 'rb') as f:
+    #     check = pickle.load(f)
 
     expl_var = explainable_variance(y_matrix)
-    fig_hist = plot_voxel_hist(
-        sub_name, expl_var, scores["cv_results"], scoring_metric=r2_score
-    )
+    fig_hist = plot_voxel_hist(sub_name, expl_var, best_scores, scoring_metric=r2_score)
     fig_hist.savefig(f"{sub_name}_{cv_strategy}_{scoring_metric}_expl_var_hist.png")
 
     fig_alphas, ax = plt.subplots(1, 1)
@@ -433,7 +450,7 @@ def main(sub_name, roi, cv_strategy, scoring_metric, average, data_dir, engine):
         plot_alphas_diagnostic(
             best_alphas=b_alpha, alphas=np.logspace(1, 20, 20), cv_fold=i, ax=ax
         )
-    fig_alphas.savefig(f"{sub_name}_{cv_strategy}_alphas.png")
+    fig_alphas.savefig(f"{sub_name}_{cv_strategy}_{scoring_metric}_alphas.png")
 
     # fig_flat = plot_flatmap(
     #     best_scores, sub_name, mask_img, cv_strategy, scoring_metric="r2_score"
