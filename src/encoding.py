@@ -34,7 +34,8 @@ def plot_flatmap(
     lh, rh = cortex.get_hemi_masks(subject=sub_name, xfmname="align_auto")
     db.save_mask(sub_name, "align_auto", "lh", lh)
 
-    nii = masking.unmask(best_scores, mask_img)
+    avg_best_score = np.mean(best_scores, axis=0) # TODO: FIXME
+    nii = masking.unmask(avg_best_score, mask_img)
 
     # https://gallantlab.org/pycortex/auto_examples/datasets/plot_vertex.html
     nii_vol = cortex.Volume(
@@ -146,9 +147,8 @@ def plot_voxel_hist(
         histtype="step",
         label="Explainable variance",
     )
-    # TODO: FIXME
     ax.hist(
-        np.mean(best_scores, axis=0),
+        np.mean(best_scores, axis=0),  # TODO: FIXME
         bins=np.linspace(0, 1, 100),
         log=True,
         histtype="step",
@@ -169,7 +169,7 @@ def plot_voxel_hist(
 
     ax.grid("on")
     ax.legend()
-    return ax
+    return fig
 
 
 def explainable_variance(y_matrix, bias_correction=True, do_zscore=True):
@@ -347,7 +347,7 @@ def ridgeCV_himalaya(X_matrix, y_matrix, groups=None, scoring=r2_score):
 )
 @click.option(
     "--data_dir",
-    default="/home/emdupre/projects/rrg-pbellec/emdupre/things-encode",
+    default="/home/emdupre/links/projects/rrg-pbellec/emdupre/things.betas",
     help="Data directory.",
 )
 @click.option(
@@ -399,21 +399,31 @@ def main(sub_name, roi, cv_strategy, scoring_metric, average, data_dir, engine):
     if cv_strategy == "kfold":
         groups = None
     else:
+        # Note that "category" will return `incl_labels` corresponding
+        # to image categories (e.g., 'acorn')
+        # and "image" will return `incl_labels` corresponding
+        # to image identities (e.g., 'acorn_01b').
         groups = np.loadtxt(
-            Path(data_dir, f"{sub_name}_{cv_strategy}_outerCV_groups.txt"),
+            Path(data_dir, "encoding-inputs", f"{sub_name}_{cv_strategy}_stim_labels.txt"),
             dtype=np.str_,
         )
+        if cv_strategy == "category":
+            incl_labels = np.asarray([stim.rsplit("_", 1)[0] for stim in sorted_stim])
     ####################################
     # FIXME
     inner_groups = np.loadtxt(
-        Path(data_dir, f"{sub_name}_innerCV_groups.txt"), dtype=np.str_
+        Path(data_dir, "encoding-inputs", f"{sub_name}_session_labels.txt"), dtype=np.str_
     )
     ####################################
-    X_matrix = np.load(Path(data_dir, f"{sub_name}_stim_features.npy"))
+    X_matrix = np.load(Path(data_dir, "encoding-inputs", f"{sub_name}_stim_features.npy"))
+    mask = nib.load(Path(data_dir, "encoding-inputs", f"{sub_name}_brain_mask.nii.gz"))
+
     if roi is not None:
-        y_matrix = np.load(Path(data_dir, f"{sub_name}_{roi}_brain_responses.npy"))
+        y_matrix = np.load(Path(data_dir, "encoding-inputs", f"{sub_name}_{roi}_brain_responses.npy"))
     else:
-        y_matrix = np.load(Path(data_dir, f"{sub_name}_brain_responses.npy"))
+        y_matrix = np.load(Path(data_dir, "encoding-inputs", f"{sub_name}_brain_responses.npy"))
+
+    expl_var = explainable_variance(y_matrix)
 
     if average:
         # NOTE: shapes hard-coded for three repetitions, 4174 images, THINGS dataset
@@ -430,31 +440,44 @@ def main(sub_name, roi, cv_strategy, scoring_metric, average, data_dir, engine):
         best_scores = [estim.best_score_ for estim in scores["estimator"]]
     elif engine == "himalaya":
         scores = ridgeCV_himalaya(X_matrix, y_matrix, groups=groups, scoring=scoring)
-        best_alphas = [best_alpha_ for best_alpha_ in scores["best_alphas"]]
-        best_scores = [best_score_ for best_score_ in scores["best_scores"]]
+        best_alphas = [best_alpha_.cpu() for best_alpha_ in scores["best_alphas"]]
+        best_scores = [best_score_.cpu() for best_score_ in scores["best_scores"]]
 
-    out_file = f"{sub_name}_cv-{cv_strategy}_{engine}_scores.pkl"
-    with open(out_file, "wb") as f:
-        pickle.dump(scores, f)
+    if average:
+        out_file = Path(data_dir, "encoding-inputs", f"{sub_name}_cv-{cv_strategy}-average_{engine}_scores.pkl")
+    else:
+        out_file = Path(data_dir, "encoding-inputs", f"{sub_name}_cv-{cv_strategy}_{engine}_scores.pkl")
+
+    if not out_file.is_file():
+        with open(out_file, "wb") as f:
+            pickle.dump(scores, f)
 
     # to un-pickle
     # with open(out_file, 'rb') as f:
     #     check = pickle.load(f)
 
-    expl_var = explainable_variance(y_matrix)
-    fig_hist = plot_voxel_hist(sub_name, expl_var, best_scores, scoring_metric=r2_score)
-    fig_hist.savefig(f"{sub_name}_{cv_strategy}_{scoring_metric}_expl_var_hist.png")
+    fig_hist = plot_voxel_hist(sub_name, expl_var, best_scores, scoring_metric=scoring_metric)
+    if average:
+        fig_hist.savefig(f"{sub_name}_{cv_strategy}-average_{scoring_metric}_expl_var_hist.png")
+    else:
+        fig_hist.savefig(f"{sub_name}_{cv_strategy}_{scoring_metric}_expl_var_hist.png")
+    plt.close(fig_hist)
 
     fig_alphas, ax = plt.subplots(1, 1)
     for i, b_alpha in enumerate(best_alphas):
         plot_alphas_diagnostic(
             best_alphas=b_alpha, alphas=np.logspace(1, 20, 20), cv_fold=i, ax=ax
         )
-    fig_alphas.savefig(f"{sub_name}_{cv_strategy}_{scoring_metric}_alphas.png")
+    if average:
+        fig_alphas.savefig(f"{sub_name}_{cv_strategy}-average_{scoring_metric}_alphas.png")
+    else:
+        fig_alphas.savefig(f"{sub_name}_{cv_strategy}_{scoring_metric}_alphas.png")
+    plt.close(fig_alphas)
 
-    # fig_flat = plot_flatmap(
-    #     best_scores, sub_name, mask_img, cv_strategy, scoring_metric="r2_score"
-    # )
+    fig_flat = plot_flatmap(
+        best_scores, sub_name, mask_img, cv_strategy, scoring_metric=scoring_metric
+    )
+    plt.close(fig_flat)
 
 
 if __name__ == "__main__":

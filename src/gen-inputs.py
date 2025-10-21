@@ -35,11 +35,11 @@ def _load_brain_arrays(sub_name, roi, data_dir):
     beta_fname = f"{sub_name}_task-things_space-T1w_model-fitHrfGLMdenoiseRR_stats-trialBetas_desc-zscore_statseries.h5"
 
     beta_h5 = h5py.File(Path(data_dir, "betas", beta_fname), "r")
+    mask = nib.nifti1.Nifti1Image(
+        np.array(beta_h5["mask_array"]), affine=np.array(beta_h5["mask_affine"])
+    )
 
     if roi is not None:
-        mask = nib.nifti1.Nifti1Image(
-            np.array(beta_h5["mask_array"]), affine=np.array(beta_h5["mask_affine"])
-        )
 
         roi_fname = (
             f"{sub_name}_task-floc_space-T1w*_roi-{roi}_*_desc-smooth_mask.nii.gz"
@@ -89,10 +89,10 @@ def _load_brain_arrays(sub_name, roi, data_dir):
         stim_names.append(row["image_name"])
         session_labels.append(row["session"])
 
-    return y_vals, stim_names, session_labels
+    return y_vals, stim_names, session_labels, mask
 
 
-def _clean_inputs(stim_arr, y_arr, y_labels, x_arr, x_labels, cv_strategy="image"):
+def _clean_inputs(stim_arr, y_arr, y_labels, x_arr, x_labels):
     """
     Clean provided brain, feature embedding arrays to
     (1) drop stimuli with less than three repetitions and
@@ -111,12 +111,6 @@ def _clean_inputs(stim_arr, y_arr, y_labels, x_arr, x_labels, cv_strategy="image
         Shape (n_stim, dim_clip_embed)
     x_labels : np.arr or list
         Shape (n_stim,)
-    cv_strategy : str
-        Strategy for cross-validation. Must be in ["image", "category"].
-        Note that "category" will return `incl_labels` corresponding
-        to image categories (e.g., 'acorn')
-        and "image" will return `incl_labels` corresponding
-        to image identities (e.g., 'acorn_01b').
 
     Returns
     -------
@@ -156,26 +150,18 @@ def _clean_inputs(stim_arr, y_arr, y_labels, x_arr, x_labels, cv_strategy="image
     incl_y_labels = y_labels[y_mask][sort_idx]
     incl_x_arr = np.repeat(x_arr[x_mask], n_repeats, axis=0)
 
-    # reshape according to cv_strategy
-    if cv_strategy == "image":
-        incl_labels = sorted_stim
-
-    if cv_strategy == "category":
-        incl_labels = np.asarray([stim.rsplit("_", 1)[0] for stim in sorted_stim])
-
-    return incl_labels, incl_y_arr, incl_y_labels, incl_x_arr
+    return sorted_stim, incl_y_arr, incl_y_labels, incl_x_arr
 
 
-def gen_inputs(sub_name, roi, cv_strategy, data_dir):
+def gen_inputs(sub_name, roi, data_dir):
     """
     Parameters
     ----------
     sub_name : str
     roi : str
-    cv_strategy : str
     data_dir : str
     """
-    y_vals, stim_names, session_labels = _load_brain_arrays(sub_name, roi, data_dir)
+    y_vals, stim_names, session_labels, mask = _load_brain_arrays(sub_name, roi, data_dir)
     clip_feats, clip_fnames = _load_stim_arrays(data_dir)
 
     stim_vec, y_matrix, y_sessions, X_matrix = _clean_inputs(
@@ -184,10 +170,9 @@ def gen_inputs(sub_name, roi, cv_strategy, data_dir):
         session_labels,
         clip_feats,
         clip_fnames,
-        cv_strategy=cv_strategy,
     )
 
-    return stim_vec, y_matrix, y_sessions, X_matrix
+    return stim_vec, y_matrix, y_sessions, X_matrix, mask
 
 
 @click.command()
@@ -199,7 +184,7 @@ def gen_inputs(sub_name, roi, cv_strategy, data_dir):
     help="Strategy for cross-validation. Must be 'image' or 'category'",
 )
 @click.option(
-    "--data_dir", default="/Users/emdupre/Desktop/things-encode", help="Data directory."
+    "--data_dir", default="/home/emdupre/links/projects/rrg-pbellec/emdupre/things.betas", help="Data directory."
 )
 def main(sub_name, roi, cv_strategy, data_dir):
     """
@@ -221,16 +206,26 @@ def main(sub_name, roi, cv_strategy, data_dir):
         err_msg = f"Unrecognized cross-validation strategy {cv_strategy}"
         raise ValueError(err_msg)
 
-    stim_vec, y_matrix, y_sessions, X_matrix = gen_inputs(
-        sub_name, roi, cv_strategy, data_dir
+    stim_vec, y_matrix, y_sessions, X_matrix, mask = gen_inputs(
+        sub_name, roi, data_dir
     )
 
     out_stim = Path(
-        data_dir, "encoding-inputs", f"{sub_name}_{cv_strategy}_outerCV_groups.txt"
+        data_dir, "encoding-inputs", f"{sub_name}_{cv_strategy}_stim_labels.txt"
     )
     if not out_stim.is_file():
         out_stim.parent.mkdir(exist_ok=True, parents=True)
         np.savetxt(out_stim, stim_vec, fmt="%s")
+
+    out_y_sessions = Path(data_dir, "encoding-inputs", f"{sub_name}_session_labels.txt")
+    if not out_y_sessions.is_file():
+        out_y_sessions.parent.mkdir(exist_ok=True, parents=True)
+        np.savetxt(out_y_sessions, y_sessions, fmt="%s")
+
+    out_X_matrix = Path(data_dir, "encoding-inputs", f"{sub_name}_stim_features.npy")
+    if not out_X_matrix.is_file():
+        out_X_matrix.parent.mkdir(exist_ok=True, parents=True)
+        np.save(out_X_matrix, X_matrix)
 
     if roi is not None:
         out_y_matrix = Path(
@@ -247,15 +242,10 @@ def main(sub_name, roi, cv_strategy, data_dir):
             out_y_matrix.parent.mkdir(exist_ok=True, parents=True)
             np.save(out_y_matrix, y_matrix)
 
-    out_y_sessions = Path(data_dir, "encoding-inputs", f"{sub_name}_innerCV_groups.txt")
-    if not out_y_sessions.is_file():
-        out_y_sessions.parent.mkdir(exist_ok=True, parents=True)
-        np.savetxt(out_y_sessions, y_sessions, fmt="%s")
-
-    out_X_matrix = Path(data_dir, "encoding-inputs", f"{sub_name}_stim_features.npy")
-    if not out_X_matrix.is_file():
-        out_X_matrix.parent.mkdir(exist_ok=True, parents=True)
-        np.save(out_X_matrix, X_matrix)
+    out_mask = Path(data_dir, "encoding_inputs", f"{sub_name}_brain_mask.nii.gz")
+    if not out_mask.is_file():
+        out_mask.parent.mkdir(exist_ok=True, parents=True)
+        nib.save(mask, out_mask)
 
 
 if __name__ == "__main__":
