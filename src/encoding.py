@@ -8,6 +8,7 @@ import scipy
 import cortex
 import sklearn
 import numpy as np
+import nibabel as nib
 from cortex import db
 from nilearn import masking
 import matplotlib.pyplot as plt
@@ -18,7 +19,7 @@ from sklearn.metrics import make_scorer, r2_score
 from sklearn.model_selection import cross_validate, KFold, GroupKFold
 
 
-os.environ["PATH"] += ":/Applications/Inkscape.app/Contents/MacOS/"
+# os.environ["PATH"] += ":/Applications/Inkscape.app/Contents/MacOS/"
 
 
 def plot_flatmap(
@@ -32,26 +33,26 @@ def plot_flatmap(
     sub_name : str
     """
     lh, rh = cortex.get_hemi_masks(subject=sub_name, xfmname="align_auto")
-    db.save_mask(sub_name, "align_auto", "lh", lh)
 
     avg_best_score = np.mean(best_scores, axis=0) # TODO: FIXME
     nii = masking.unmask(avg_best_score, mask_img)
 
     # https://gallantlab.org/pycortex/auto_examples/datasets/plot_vertex.html
-    nii_vol = cortex.Volume(
-        data=nii.get_fdata().T[rh],
+    vol = cortex.Volume(
+        data=np.swapaxes(nii.get_fdata(), 0, -1),
         subject=sub_name,
         xfmname="align_auto",
-        # vmin=(np.min(ffx_nii.dataobj) * 0.95),
-        # vmax=(np.max(ffx_nii.dataobj) * 0.95),
-        # cmap="magma",
+        mask=mask_img.get_fdata(),
+        vmin=0,
+        vmax=0.30,
+        cmap="magma",
     )
 
     out_name = f"{sub_name}_{cv_strategy}_encoding_{scoring_metric}_flatmap.png"
-    fig = cortex.quickshow(nii_vol, sampler="nearest")
+    # fig = cortex.quickshow(nii_vol, sampler="nearest")
     cortex.quickflat.make_png(
         out_name,
-        nii_vol,
+        vol,
         sampler="trilinear",
         curv_brightness=1.0,
         with_colorbar=True,
@@ -62,7 +63,7 @@ def plot_flatmap(
         dpi=300,
         height=2048,
     )
-    return fig
+    return
 
 
 def plot_alphas_diagnostic(best_alphas, alphas, cv_fold=None, ax=None):
@@ -404,11 +405,11 @@ def main(sub_name, roi, cv_strategy, scoring_metric, average, data_dir, engine):
         # and "image" will return `incl_labels` corresponding
         # to image identities (e.g., 'acorn_01b').
         groups = np.loadtxt(
-            Path(data_dir, "encoding-inputs", f"{sub_name}_{cv_strategy}_stim_labels.txt"),
+            Path(data_dir, "encoding-inputs", f"{sub_name}_stim_labels.txt"),
             dtype=np.str_,
         )
         if cv_strategy == "category":
-            incl_labels = np.asarray([stim.rsplit("_", 1)[0] for stim in sorted_stim])
+            groups = np.asarray([g.rsplit("_", 1)[0] for g in groups])
     ####################################
     # FIXME
     inner_groups = np.loadtxt(
@@ -474,10 +475,9 @@ def main(sub_name, roi, cv_strategy, scoring_metric, average, data_dir, engine):
         fig_alphas.savefig(f"{sub_name}_{cv_strategy}_{scoring_metric}_alphas.png")
     plt.close(fig_alphas)
 
-    fig_flat = plot_flatmap(
-        best_scores, sub_name, mask_img, cv_strategy, scoring_metric=scoring_metric
+    plot_flatmap(
+        best_scores, sub_name, mask, cv_strategy, scoring_metric=scoring_metric
     )
-    plt.close(fig_flat)
 
 
 if __name__ == "__main__":
