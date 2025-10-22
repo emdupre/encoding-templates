@@ -23,7 +23,7 @@ from sklearn.model_selection import cross_validate, KFold, GroupKFold
 
 
 def plot_flatmap(
-    best_scores, sub_name, mask_img, cv_strategy, scoring_metric="r2_score"
+    best_scores, sub_name, mask_img, cv_strategy, scoring_metric="r2_score", average=False
 ):
     """
     Parameters
@@ -48,7 +48,11 @@ def plot_flatmap(
         cmap="magma",
     )
 
-    out_name = f"{sub_name}_{cv_strategy}_encoding_{scoring_metric}_flatmap.png"
+    if average:
+        out_name = f"{sub_name}_{cv_strategy}-average_encoding_{scoring_metric}_flatmap.png"
+    else:
+        out_name = f"{sub_name}_{cv_strategy}_encoding_{scoring_metric}_flatmap.png"
+
     # fig = cortex.quickshow(nii_vol, sampler="nearest")
     cortex.quickflat.make_png(
         out_name,
@@ -476,7 +480,12 @@ def main(sub_name, roi, cv_strategy, scoring_metric, average, data_dir, engine):
     plt.close(fig_alphas)
 
     plot_flatmap(
-        best_scores, sub_name, mask, cv_strategy, scoring_metric=scoring_metric
+        best_scores,
+        sub_name,
+        mask,
+        cv_strategy,
+        scoring_metric=scoring_metric,
+        average=average,
     )
 
 
