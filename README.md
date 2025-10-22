@@ -11,12 +11,12 @@ apptainer cache clean
 apptainer build --notest things-apptainer.sif apptainer.def
 ```
 
-then, we can confirm it can access the GPU in a Beluga HPC interactive job with:
+then, we can confirm it can access the GPU in a Rorqual HPC interactive job with:
 
 ```
 module load apptainer/1.3.4
 module load cuda
-salloc --ntasks=1 --gpus-per-task=1 --account=<RRG-GROUP> --time=0:10:0 --mem=500M
+salloc --account=<RRG-ACCOUNT> --gpus-per-node=h100_3g.40gb:1 --time=00:10:00 --mem=10G
 
 nvidia-smi
 apptainer test --nv things-apptainer.sif

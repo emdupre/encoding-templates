@@ -1,0 +1,62 @@
+Bootstrap: docker
+From: ubuntu:24.04
+ 
+%setup
+  mkdir $APPTAINER_ROOTFS/project
+  mkdir $APPTAINER_ROOTFS/scratch
+  mkdir $APPTAINER_ROOTFS/lustre09
+  mkdir $APPTAINER_ROOTFS/lustre09/project
+  mkdir $APPTAINER_ROOTFS/lustre10
+  mkdir $APPTAINER_ROOTFS/lustre10/scratch
+
+%post -c /bin/bash
+    sudo add-apt-repository universe
+    sudo add-apt-repository ppa:inkscape.dev/stable
+
+    apt-get update
+    apt-get install -y --no-install-recommends curl ca-certificates
+    apt-get install -y build-essential git python3-dev pipx
+
+    apt-get install -y inkscape
+
+    pipx install uv
+    pipx ensurepath
+    source ~/.bashrc
+
+    ~/.local/bin/uv venv --seed .venv
+    source /.venv/bin/activate
+    export UV_HTTP_TIMEOUT=60
+
+    ~/.local/bin/uv pip install -r requirements.txt --python .venv
+
+%files
+    requirements.txt
+
+%arguments
+    DEBIAN_FRONTEND=noninteractive
+
+%environment
+    export TZ="America/New_York"
+    export PATH="/root/.local/bin/:$PATH"
+
+%runscript
+    #!/bin/bash
+    source /.venv/bin/activate
+    echo "Arguments received: $*"
+
+%test
+    #!/bin/bash
+    source /.venv/bin/activate
+    gpu_access=$(uv run python -c "import torch ; print(torch.cuda.is_available())")
+
+    case $gpu_access in
+    (True)    echo "Container can access GPU.";;
+    (False)   echo "Container cannot access GPU."; exit 1;;
+    esac
+
+%labels
+    Author emd222@cornell.edu
+    Version v0.0.1
+
+%help
+    This is a GPU-enabled contained for running `things-encode` analyses.
