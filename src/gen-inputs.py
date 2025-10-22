@@ -179,14 +179,9 @@ def gen_inputs(sub_name, roi, data_dir):
 @click.option("--sub_name", default="sub-01", help="Subject name.")
 @click.option("--roi", default=None, help="Region-of-interest")
 @click.option(
-    "--cv_strategy",
-    default=None,
-    help="Strategy for cross-validation. Must be 'image' or 'category'",
-)
-@click.option(
     "--data_dir", default="/home/emdupre/links/projects/rrg-pbellec/emdupre/things.betas", help="Data directory."
 )
-def main(sub_name, roi, cv_strategy, data_dir):
+def main(sub_name, roi, data_dir):
     """
     Create trialwise inputs for voxelwise encoding models on THINGS data using
     existing CLIP embeddings (previously generated using thingsvision).
@@ -201,17 +196,12 @@ def main(sub_name, roi, cv_strategy, data_dir):
         err_msg = f"Unrecognized subject {sub_name}"
         raise ValueError(err_msg)
 
-    cv_strategies = ["image", "category"]
-    if cv_strategy not in cv_strategies:
-        err_msg = f"Unrecognized cross-validation strategy {cv_strategy}"
-        raise ValueError(err_msg)
-
     stim_vec, y_matrix, y_sessions, X_matrix, mask = gen_inputs(
         sub_name, roi, data_dir
     )
 
     out_stim = Path(
-        data_dir, "encoding-inputs", f"{sub_name}_{cv_strategy}_stim_labels.txt"
+        data_dir, "encoding-inputs", f"{sub_name}_stim_labels.txt"
     )
     if not out_stim.is_file():
         out_stim.parent.mkdir(exist_ok=True, parents=True)
@@ -242,7 +232,7 @@ def main(sub_name, roi, cv_strategy, data_dir):
             out_y_matrix.parent.mkdir(exist_ok=True, parents=True)
             np.save(out_y_matrix, y_matrix)
 
-    out_mask = Path(data_dir, "encoding_inputs", f"{sub_name}_brain_mask.nii.gz")
+    out_mask = Path(data_dir, "encoding-inputs", f"{sub_name}_brain_mask.nii.gz")
     if not out_mask.is_file():
         out_mask.parent.mkdir(exist_ok=True, parents=True)
         nib.save(mask, out_mask)
