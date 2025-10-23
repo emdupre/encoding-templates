@@ -112,15 +112,6 @@ def plot_alphas_diagnostic(best_alphas, alphas, cv_fold=None, ax=None):
     return ax
 
 
-# # https://stackoverflow.com/questions/15033511/compute-a-confidence-interval-from-sample-data
-# def _mean_confidence_interval(data, confidence=0.95):
-#     a = 1.0 * np.array(data)
-#     n = len(a)
-#     m, se = np.mean(a, axis=0), scipy.stats.sem(a)
-#     h = se * scipy.stats.t.ppf((1 + confidence) / 2.0, n - 1)
-#     return m, m - h, m + h
-
-
 def plot_voxel_hist(
     sub_name, expl_var, best_scores, scoring_metric="r2_score", ax=None
 ):
@@ -152,8 +143,15 @@ def plot_voxel_hist(
         histtype="step",
         label="Explainable variance",
     )
+
+    # adapted from https://scikit-learn.org/stable/auto_examples/model_selection/plot_roc_crossval.html
+    mean_best_scores = np.mean(best_scores, axis=0)
+    std_best_score = np.std(best_scores, axis=0)
+    best_score_upper = np.minimum(mean_best_scores + std_best_score, 1)
+    best_score_lower = np.maximum(mean_best_scores - std_best_score, 0)
+
     ax.hist(
-        np.mean(best_scores, axis=0),  # TODO: FIXME
+        mean_best_scores,
         bins=np.linspace(0, 1, 100),
         log=True,
         histtype="step",
@@ -161,7 +159,15 @@ def plot_voxel_hist(
             "$R^2$ values" if (scoring_metric == "r2_score") else "Correlation values"
         ),
     )
-    ax.set_ylabel("Number of voxels")
+    # TODO: FIXME
+    # ax.fill_between(
+    #     np.linspace(0, 1, 100),
+    #     best_score_lower,
+    #     best_score_upper,
+    #     color="grey",
+    #     alpha=0.2,
+    #     label=r"$\pm$ 1 std. dev.",
+    # )
 
     if scoring_metric == "r2_score":
         ax.set_title(
@@ -172,6 +178,7 @@ def plot_voxel_hist(
             f"Histogram of explainable variance and average correlation for {sub_name}"
         )
 
+    ax.set_ylabel("Number of voxels")
     ax.grid("on")
     ax.legend()
     return fig

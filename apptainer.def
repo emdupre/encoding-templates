@@ -54,9 +54,5 @@ From: ubuntu:24.04
     (False)   echo "Container cannot access GPU."; exit 1;;
     esac
 
-%labels
-    Author emd222@cornell.edu
-    Version v0.0.1
-
 %help
-    This is a GPU-enabled contained for running `things-encode` analyses.
+    This is a GPU-enabled contained for running `encoding-templates` analyses.

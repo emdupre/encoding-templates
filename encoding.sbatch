@@ -12,7 +12,8 @@ nvidia-smi
 
 PROJECT=$HOME/links/projects/rrg-pbellec/emdupre/things.betas
 subjects=("sub-01" "sub-02" "sub-03" "sub-06")
-cv_strategy='category'
+cv_strategy='kfold'
+engine='himalaya'
 
 echo "Now running : "
 echo apptainer exec --nv $PROJECT/things-apptainer.sif \
@@ -22,7 +23,7 @@ echo apptainer exec --nv $PROJECT/things-apptainer.sif \
     "--data_dir=${PROJECT}" \
     "--average" \
     "--cv_strategy=${cv_strategy}" \
-    "--engine='himalaya'"
+    "--engine=${engine}"
 echo " "
 
 apptainer exec --nv $PROJECT/things-apptainer.sif \
@@ -32,7 +33,7 @@ apptainer exec --nv $PROJECT/things-apptainer.sif \
     --data_dir=${PROJECT} \
     --average \
     --cv_strategy=${cv_strategy} \
-    --engine='himalaya'"
+    --engine=${engine}"
 
 
 # echo ${subjects[$SLURM_ARRAY_TASK_ID]}
@@ -40,6 +41,6 @@ apptainer exec --nv $PROJECT/things-apptainer.sif \
 # python $PROJECT/encoding-templates/src/encoding.py \
 #     --sub_name=${subjects[$SLURM_ARRAY_TASK_ID]} \
 #     --data_dir=$PROJECT \
-#     --cv_strategy="kfold" \
-#     --engine="himalaya" \
-#     # --average
+#     --average \
+#     --cv_strategy=${cv_strategy} \
+#     --engine=${engine}
