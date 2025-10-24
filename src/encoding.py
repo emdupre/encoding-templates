@@ -23,7 +23,12 @@ from sklearn.model_selection import cross_validate, KFold, GroupKFold
 
 
 def plot_flatmap(
-    best_scores, sub_name, mask_img, cv_strategy, scoring_metric="r2_score", average=False
+    best_scores,
+    sub_name,
+    mask_img,
+    cv_strategy,
+    scoring_metric="r2_score",
+    average=False,
 ):
     """
     Parameters
@@ -34,7 +39,7 @@ def plot_flatmap(
     """
     lh, rh = cortex.get_hemi_masks(subject=sub_name, xfmname="align_auto")
 
-    avg_best_score = np.mean(best_scores, axis=0) # TODO: FIXME
+    avg_best_score = np.mean(best_scores, axis=0)  # TODO: FIXME
     nii = masking.unmask(avg_best_score, mask_img)
 
     # https://gallantlab.org/pycortex/auto_examples/datasets/plot_vertex.html
@@ -49,7 +54,9 @@ def plot_flatmap(
     )
 
     if average:
-        out_name = f"{sub_name}_{cv_strategy}-average_encoding_{scoring_metric}_flatmap.png"
+        out_name = (
+            f"{sub_name}_{cv_strategy}-average_encoding_{scoring_metric}_flatmap.png"
+        )
     else:
         out_name = f"{sub_name}_{cv_strategy}_encoding_{scoring_metric}_flatmap.png"
 
@@ -116,6 +123,10 @@ def plot_voxel_hist(
     sub_name, expl_var, best_scores, scoring_metric="r2_score", ax=None
 ):
     r"""
+    Adapted from the following examples :
+    - https://scikit-learn.org/stable/auto_examples/model_selection/plot_roc_crossval.html
+    - https://gallantlab.org/voxelwise_tutorials/notebooks/shortclips/03_compute_explainable_variance.html
+
     Parameters
     ----------
     sub_name : str
@@ -136,38 +147,40 @@ def plot_voxel_hist(
     if ax is None:
         fig, ax = plt.subplots(1, 1)
 
+    bins = np.linspace(0, 1, 100)
     ax.hist(
         expl_var,
-        bins=np.linspace(0, 1, 100),
+        bins=bins,
         log=True,
         histtype="step",
         label="Explainable variance",
     )
 
-    # adapted from https://scikit-learn.org/stable/auto_examples/model_selection/plot_roc_crossval.html
-    mean_best_scores = np.mean(best_scores, axis=0)
-    std_best_score = np.std(best_scores, axis=0)
-    best_score_upper = np.minimum(mean_best_scores + std_best_score, 1)
-    best_score_lower = np.maximum(mean_best_scores - std_best_score, 0)
+    mean_score = np.mean(best_scores, axis=0)
+    std_score = np.std(best_scores, axis=0)
+    score_upper = mean_score + std_score
+    score_lower = mean_score - std_score
+    upper_ci, _ = np.histogram(score_upper, bins=bins, density=False)
+    lower_ci, _ = np.histogram(score_lower, bins=bins, density=False)
 
     ax.hist(
-        mean_best_scores,
-        bins=np.linspace(0, 1, 100),
+        mean_score,
+        bins=bins,
         log=True,
         histtype="step",
         label=(
             "$R^2$ values" if (scoring_metric == "r2_score") else "Correlation values"
         ),
     )
-    # TODO: FIXME
-    # ax.fill_between(
-    #     np.linspace(0, 1, 100),
-    #     best_score_lower,
-    #     best_score_upper,
-    #     color="grey",
-    #     alpha=0.2,
-    #     label=r"$\pm$ 1 std. dev.",
-    # )
+    ax.fill_between(
+        bins[:-1],
+        lower_ci,
+        upper_ci,
+        color="grey",
+        alpha=0.2,
+        step="post",
+        label=r"$\pm$ 1 std. dev.",
+    )
 
     if scoring_metric == "r2_score":
         ax.set_title(
@@ -424,16 +437,23 @@ def main(sub_name, roi, cv_strategy, scoring_metric, average, data_dir, engine):
     ####################################
     # FIXME
     inner_groups = np.loadtxt(
-        Path(data_dir, "encoding-inputs", f"{sub_name}_session_labels.txt"), dtype=np.str_
+        Path(data_dir, "encoding-inputs", f"{sub_name}_session_labels.txt"),
+        dtype=np.str_,
     )
     ####################################
-    X_matrix = np.load(Path(data_dir, "encoding-inputs", f"{sub_name}_stim_features.npy"))
+    X_matrix = np.load(
+        Path(data_dir, "encoding-inputs", f"{sub_name}_stim_features.npy")
+    )
     mask = nib.load(Path(data_dir, "encoding-inputs", f"{sub_name}_brain_mask.nii.gz"))
 
     if roi is not None:
-        y_matrix = np.load(Path(data_dir, "encoding-inputs", f"{sub_name}_{roi}_brain_responses.npy"))
+        y_matrix = np.load(
+            Path(data_dir, "encoding-inputs", f"{sub_name}_{roi}_brain_responses.npy")
+        )
     else:
-        y_matrix = np.load(Path(data_dir, "encoding-inputs", f"{sub_name}_brain_responses.npy"))
+        y_matrix = np.load(
+            Path(data_dir, "encoding-inputs", f"{sub_name}_brain_responses.npy")
+        )
 
     expl_var = explainable_variance(y_matrix)
 
@@ -456,9 +476,17 @@ def main(sub_name, roi, cv_strategy, scoring_metric, average, data_dir, engine):
         best_scores = [best_score_.cpu() for best_score_ in scores["best_scores"]]
 
     if average:
-        out_file = Path(data_dir, "encoding-inputs", f"{sub_name}_cv-{cv_strategy}-average_{engine}_scores.pkl")
+        out_file = Path(
+            data_dir,
+            "encoding-inputs",
+            f"{sub_name}_cv-{cv_strategy}-average_{engine}_scores.pkl",
+        )
     else:
-        out_file = Path(data_dir, "encoding-inputs", f"{sub_name}_cv-{cv_strategy}_{engine}_scores.pkl")
+        out_file = Path(
+            data_dir,
+            "encoding-inputs",
+            f"{sub_name}_cv-{cv_strategy}_{engine}_scores.pkl",
+        )
 
     if not out_file.is_file():
         with open(out_file, "wb") as f:
@@ -468,9 +496,13 @@ def main(sub_name, roi, cv_strategy, scoring_metric, average, data_dir, engine):
     # with open(out_file, 'rb') as f:
     #     check = pickle.load(f)
 
-    fig_hist = plot_voxel_hist(sub_name, expl_var, best_scores, scoring_metric=scoring_metric)
+    fig_hist = plot_voxel_hist(
+        sub_name, expl_var, best_scores, scoring_metric=scoring_metric
+    )
     if average:
-        fig_hist.savefig(f"{sub_name}_{cv_strategy}-average_{scoring_metric}_expl_var_hist.png")
+        fig_hist.savefig(
+            f"{sub_name}_{cv_strategy}-average_{scoring_metric}_expl_var_hist.png"
+        )
     else:
         fig_hist.savefig(f"{sub_name}_{cv_strategy}_{scoring_metric}_expl_var_hist.png")
     plt.close(fig_hist)
@@ -481,7 +513,9 @@ def main(sub_name, roi, cv_strategy, scoring_metric, average, data_dir, engine):
             best_alphas=b_alpha, alphas=np.logspace(1, 20, 20), cv_fold=i, ax=ax
         )
     if average:
-        fig_alphas.savefig(f"{sub_name}_{cv_strategy}-average_{scoring_metric}_alphas.png")
+        fig_alphas.savefig(
+            f"{sub_name}_{cv_strategy}-average_{scoring_metric}_alphas.png"
+        )
     else:
         fig_alphas.savefig(f"{sub_name}_{cv_strategy}_{scoring_metric}_alphas.png")
     plt.close(fig_alphas)
