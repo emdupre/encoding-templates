@@ -57,6 +57,13 @@ def _load_brain_arrays(sub_name, roi, data_dir):
     annot_df = annot_df.loc[annot_df["exclude_session"] == False]
     annot_df = annot_df.loc[annot_df["atypical"] == False]
 
+    cat53_mask = annot_df[annot_df["highercat53_names"] != "[]"].index
+    lowcat_names = annot_df["image_category"][cat53_mask]
+    cat53_names = annot_df["highercat53_names"][cat53_mask].str.replace(
+        r"\]|\[", "", regex=True
+    )
+    cat53_names.str.split(",", expand=True)
+
     # subset_idx = None
     y_vals = []
     stim_names = []
@@ -161,7 +168,9 @@ def gen_inputs(sub_name, roi, data_dir):
     roi : str
     data_dir : str
     """
-    y_vals, stim_names, session_labels, mask = _load_brain_arrays(sub_name, roi, data_dir)
+    y_vals, stim_names, session_labels, mask = _load_brain_arrays(
+        sub_name, roi, data_dir
+    )
     clip_feats, clip_fnames = _load_stim_arrays(data_dir)
 
     stim_vec, y_matrix, y_sessions, X_matrix = _clean_inputs(
@@ -179,7 +188,9 @@ def gen_inputs(sub_name, roi, data_dir):
 @click.option("--sub_name", default="sub-01", help="Subject name.")
 @click.option("--roi", default=None, help="Region-of-interest")
 @click.option(
-    "--data_dir", default="/home/emdupre/links/projects/rrg-pbellec/emdupre/things.betas", help="Data directory."
+    "--data_dir",
+    default="/home/emdupre/links/projects/rrg-pbellec/emdupre/things.betas",
+    help="Data directory.",
 )
 def main(sub_name, roi, data_dir):
     """
@@ -196,13 +207,9 @@ def main(sub_name, roi, data_dir):
         err_msg = f"Unrecognized subject {sub_name}"
         raise ValueError(err_msg)
 
-    stim_vec, y_matrix, y_sessions, X_matrix, mask = gen_inputs(
-        sub_name, roi, data_dir
-    )
+    stim_vec, y_matrix, y_sessions, X_matrix, mask = gen_inputs(sub_name, roi, data_dir)
 
-    out_stim = Path(
-        data_dir, "encoding-inputs", f"{sub_name}_stim_labels.txt"
-    )
+    out_stim = Path(data_dir, "encoding-inputs", f"{sub_name}_stim_labels.txt")
     if not out_stim.is_file():
         out_stim.parent.mkdir(exist_ok=True, parents=True)
         np.savetxt(out_stim, stim_vec, fmt="%s")
