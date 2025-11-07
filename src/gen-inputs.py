@@ -57,13 +57,6 @@ def _load_brain_arrays(sub_name, roi, data_dir):
     annot_df = annot_df.loc[annot_df["exclude_session"] == False]
     annot_df = annot_df.loc[annot_df["atypical"] == False]
 
-    cat53_mask = annot_df[annot_df["highercat53_names"] != "[]"].index
-    lowcat_names = annot_df["image_category"][cat53_mask]
-    cat53_names = annot_df["highercat53_names"][cat53_mask].str.replace(
-        r"\]|\[", "", regex=True
-    )
-    cat53_names.str.split(",", expand=True)
-
     # subset_idx = None
     y_vals = []
     stim_names = []
