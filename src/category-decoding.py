@@ -3,6 +3,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from sklearn.svm import LinearSVC
 from sklearn.multioutput import ClassifierChain
 from sklearn.multiclass import OneVsRestClassifier
 from sklearn.linear_model import LogisticRegression
@@ -30,22 +31,20 @@ def pred_image_categories(sub_name, data_dir):
     )
 
     stim_cat = np.asarray([sv.rsplit("_", 1)[0] for sv in stim_vec])
-    lb = LabelBinarizer().fit(stim_cat)
-    cat_y = lb.transform(stim_cat)
+    # lb = LabelBinarizer().fit(stim_cat)
+    # cat_y = lb.transform(stim_cat)
     X_train, X_test, y_train, y_test = train_test_split(
-        X_matrix, cat_y, test_size=0.33, random_state=2
+        X_matrix, stim_cat, test_size=0.33, random_state=2
     )
 
-    clf = OneVsRestClassifier(LogisticRegression())
-    # clf = LinearSVC()
+    # clf = OneVsRestClassifier(LogisticRegression())
+    clf = LinearSVC()
     y_pred = clf.fit(X_train, y_train).predict(X_test)
-    accuracy = np.sum(y_pred == y_test) / y_test.shape[0]
+    y_score = jaccard_score(y_test, y_pred, average="micro")
 
     cfm = multilabel_confusion_matrix(y_test, y_pred)
 
-    # y_score = jaccard_score(y_test, y_pred, average="micro")
-
-    return cfm, accuracy
+    return cfm, y_score
 
 
 def pred_THINGSPlus_categories(sub_name, data_dir):
