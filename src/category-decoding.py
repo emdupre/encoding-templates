@@ -8,8 +8,13 @@ from sklearn.multioutput import ClassifierChain
 from sklearn.multiclass import OneVsRestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelBinarizer, MultiLabelBinarizer
-from sklearn.metrics import jaccard_score, multilabel_confusion_matrix
+from sklearn.preprocessing import MultiLabelBinarizer
+from sklearn.metrics import (
+    accuracy_score,
+    zero_one_loss,
+    jaccard_score,
+    multilabel_confusion_matrix,
+)
 
 
 def pred_image_categories(sub_name, data_dir):
@@ -37,10 +42,10 @@ def pred_image_categories(sub_name, data_dir):
         X_matrix, stim_cat, test_size=0.33, random_state=2
     )
 
-    # clf = OneVsRestClassifier(LogisticRegression())
+    # clf = OneVsRestClassifier(LogisticRegression())  # 0.933
     clf = LinearSVC()
     y_pred = clf.fit(X_train, y_train).predict(X_test)
-    y_score = jaccard_score(y_test, y_pred, average="micro")
+    y_score = accuracy_score(y_test, y_pred)  # 0.974
 
     cfm = multilabel_confusion_matrix(y_test, y_pred)
 
@@ -78,15 +83,16 @@ def pred_THINGSPlus_categories(sub_name, data_dir):
     mlb = MultiLabelBinarizer().fit(cat53_dense_labels_)
     cat53_y = mlb.transform(cat53_dense_labels_)
     X_train, X_test, y_train, y_test = train_test_split(
-        cat53_X, cat53_y, test_size=0.33, random_state=2
+        cat53_X, cat53_y, test_size=0.2, random_state=2
     )
 
     # run classification analysis
     clf = OneVsRestClassifier(LogisticRegression())
-    y_score = clf.fit(X_train, y_train).predict_proba(X_test)
-    cfm = multilabel_confusion_matrix(y_test, y_score >= 0.5)
+    y_pred = clf.fit(X_train, y_train).predict(X_test)
+    cfm = multilabel_confusion_matrix(y_test, y_pred)
 
-    ovr_score = jaccard_score(y_test, y_score >= 0.5, average="samples")
+    # ovr_loss = zero_one_loss(y_test, y_pred)  # 0.332
+    ovr_score = jaccard_score(y_test, y_pred, average="samples")  # 0.751
 
     # Compare with ensemble of binary classifiers
     # See : https://scikit-learn.org/stable/auto_examples/multioutput/plot_classifier_chain_yeast.html#sphx-glr-auto-examples-multioutput-plot-classifier-chain-yeast-py
@@ -97,14 +103,17 @@ def pred_THINGSPlus_categories(sub_name, data_dir):
     for chain in chains:
         chain.fit(X_train, y_train)
 
-    y_pred_chains = np.array([chain.predict_proba(X_test) for chain in chains])
+    y_pred_chains = np.array([chain.predict(X_test) for chain in chains])
     chain_scores = [
-        jaccard_score(y_test, y_pred_chain >= 0.5, average="samples")
+        jaccard_score(y_test, y_pred_chain, average="samples")
         for y_pred_chain in y_pred_chains
     ]
 
-    Y_pred_ensemble = y_pred_chains.mean(axis=0)
-    ensemble_score = jaccard_score(y_test, Y_pred_ensemble >= 0.5, average="samples")
+    y_pred_ensemble = y_pred_chains.mean(axis=0)
+    # taking the average of binary values means we have to threshold
+    ensemble_score = jaccard_score(
+        y_test, y_pred_ensemble >= 0.5, average="samples"
+    )  # 0.786
 
     return cfm, ovr_score, chain_scores, ensemble_score
 
