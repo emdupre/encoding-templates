@@ -7,7 +7,7 @@ from sklearn.svm import LinearSVC
 from sklearn.multioutput import ClassifierChain
 from sklearn.multiclass import OneVsRestClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, LeaveOneGroupOut
 from sklearn.preprocessing import MultiLabelBinarizer
 from sklearn.metrics import (
     accuracy_score,
@@ -143,7 +143,7 @@ def gen_THINGSPlus_categories(sub_name, data_dir):
         sanitized_.append([l.strip() for l in list_labels])
 
     cat_dict = dict(zip(image_names, pd.Series(sanitized_)))
-    # FIXME : this is consolidating duplicate keys, which is not what we want
+    # NOTE : this is consolidating duplicate keys
     with open(
         Path(data_dir, "encoding-inputs", "category53_mapping.json"),
         "w",
@@ -154,7 +154,7 @@ def gen_THINGSPlus_categories(sub_name, data_dir):
     return cat_dict
 
 
-def gen_THINGSPlus_groups(data_dir, data_dict=None):
+def gen_THINGSPlus_groups(sub_name, data_dir, cat_dict=None, n_splits=5):
     """
     Note
     ----
@@ -165,31 +165,46 @@ def gen_THINGSPlus_groups(data_dir, data_dict=None):
     rightward-skew given the pre-existing label distribution (i.e., the category
     "animal" is more likely to occur overall).
     """
-    if data_dict is None:
-        # NOTE, FIXME : this is consolidating duplicate keys, which is not what we want
-        with open(
-            Path(data_dir, "encoding-inputs", "category53_mapping.json"),
-            "r",
-            encoding="utf8",
-        ) as infile:
-            data_dict = json.load(infile)
+    # NOTE : this is consolidating duplicate keys
+    with open(Path(data_dir, "encoding-inputs", "category53_mapping.json")) as f:
+        cat_dict = json.load(f)
 
-    classes = list(data_dict.values())
-    unique_classes = np.unique(np.concatenate(classes).ravel())
+    stim_vec = np.loadtxt(
+        Path(data_dir, "encoding-inputs", f"{sub_name}_stim_labels.txt"),
+        dtype=np.str_,
+    )
+    X_matrix = np.load(
+        Path(data_dir, "encoding-inputs", f"{sub_name}_stim_features.npy")
+    )
 
-    split_train, split_test = [], []
+    cat53_stim_mask_ = [True if sv in cat_dict.keys() else False for sv in stim_vec]
+    cat53_X = X_matrix[cat53_stim_mask_]
 
-    for _, unique in enumerate(unique_classes):
-        train, test = [], []
+    cat53_dense_labels_ = []
+    for sv in stim_vec[cat53_stim_mask_]:
+        cat53_dense_labels_.append(cat_dict.get(sv))
 
-        for s in classes:
-            if unique in s:
-                test.append(s)
-            else:
-                train.append(s)
+    mlb = MultiLabelBinarizer().fit(cat53_dense_labels_)
+    cat53_y = mlb.transform(cat53_dense_labels_)
 
-        split_train.append(train)
-        split_test.append(test)
+    groups = []
+    X = []
+    y = []
+    for grp_lbl in range(53):
+        for y_, X_ in zip(cat53_y, cat53_X):
+            if y_[grp_lbl] == 1:
+                groups.append(grp_lbl + 1)
+                y.append(y_)
+                X.append(X_)
 
-    # group_mapping = dict(zip(data_dict.keys(), group_labels))
+    groups = np.asarray(groups)
+    X = np.asarray(X)
+    y = np.asarray(y)
+
+    logo = LeaveOneGroupOut()
+    for i, (train_index, test_index) in enumerate(logo.split(X, y, groups)):
+        print(f"Fold {i}:")
+        print(f"  Train: index={train_index}, group={groups[train_index]}")
+        print(f"  Test:  index={test_index}, group={groups[test_index]}")
+
     return

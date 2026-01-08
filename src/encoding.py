@@ -1,4 +1,3 @@
-import os
 import pickle
 from pathlib import Path
 from collections import defaultdict
@@ -9,7 +8,6 @@ import cortex
 import sklearn
 import numpy as np
 import nibabel as nib
-from cortex import db
 from nilearn import masking
 import matplotlib.pyplot as plt
 from sklearn.pipeline import make_pipeline
