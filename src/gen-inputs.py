@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import h5py
@@ -153,6 +154,42 @@ def _clean_inputs(stim_arr, y_arr, y_labels, x_arr, x_labels):
     return sorted_stim, incl_y_arr, incl_y_labels, incl_x_arr
 
 
+def gen_THINGSPlus_categories(sub_name, data_dir):
+    """
+    Parameters
+    ----------
+    sub_name : str
+    data_dir : str
+    """
+    annot_fname = f"{sub_name}_task-things_desc-perTrial_annotation.tsv"
+
+    annot_df = pd.read_csv(Path(data_dir, "annot", annot_fname), sep="\t")
+    annot_df = annot_df.loc[annot_df["exclude_session"] == False]
+    annot_df = annot_df.loc[annot_df["atypical"] == False]
+
+    cat53_mask = annot_df[annot_df["highercat53_names"] != "[]"].index
+    image_names = annot_df["image_name"][cat53_mask]
+
+    cat53_names = annot_df["highercat53_names"][cat53_mask].str.replace(
+        r"'|\]|\[", "", regex=True
+    )
+    sanitized_ = []
+    for cat in cat53_names.values:
+        list_labels = cat.split(",")
+        sanitized_.append([l.strip() for l in list_labels])
+
+    cat_dict = dict(zip(image_names, pd.Series(sanitized_)))
+    # NOTE : this is consolidating duplicate keys
+    with open(
+        Path(data_dir, "encoding-inputs", "category53_mapping.json"),
+        "w",
+        encoding="utf8",
+    ) as outfile:
+        json.dump(cat_dict, outfile)
+
+    return cat_dict
+
+
 def gen_inputs(sub_name, roi, data_dir):
     """
     Parameters
@@ -236,6 +273,9 @@ def main(sub_name, roi, data_dir):
     if not out_mask.is_file():
         out_mask.parent.mkdir(exist_ok=True, parents=True)
         nib.save(mask, out_mask)
+
+    # TODO, FIXME
+    gen_THINGSPlus_categories(sub_name, data_dir)
 
 
 if __name__ == "__main__":

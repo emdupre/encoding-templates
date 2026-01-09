@@ -1,3 +1,4 @@
+import json
 import pickle
 from pathlib import Path
 from collections import defaultdict
@@ -14,7 +15,8 @@ from sklearn.pipeline import make_pipeline
 from himalaya.scoring import correlation_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import make_scorer, r2_score
-from sklearn.model_selection import cross_validate, KFold, GroupKFold
+from sklearn.preprocessing import MultiLabelBinarizer
+from sklearn.model_selection import cross_validate, KFold, GroupKFold, LeaveOneGroupOut
 
 
 # os.environ["PATH"] += ":/Applications/Inkscape.app/Contents/MacOS/"
@@ -195,6 +197,68 @@ def plot_voxel_hist(
     return fig
 
 
+def THINGSPlus_logo(sub_name, data_dir):
+    """
+    Parameters
+    ----------
+    sub_name : str
+        Subject name
+    data_dir : str
+
+    Returns
+    -------
+    X : np.arr
+    y : np.arr
+    groups : np.arr
+
+    Note
+    ----
+    The resulting train, test splits will be of unequal sizes ;
+    that is, images that are not labelled "animal" may also be not labelled
+    "breakfast food," and so assigned to the training split multiple times.
+    The resulting distribution of labels is known to have a significant
+    rightward-skew given the pre-existing label distribution (i.e., the category
+    "animal" is more likely to occur overall).
+    """
+    # NOTE : this is consolidating duplicate keys
+    with open(Path(data_dir, "encoding-inputs", "category53_mapping.json")) as f:
+        cat_dict = json.load(f)
+
+    stim_vec = np.loadtxt(
+        Path(data_dir, "encoding-inputs", f"{sub_name}_stim_labels.txt"),
+        dtype=np.str_,
+    )
+    X_matrix = np.load(
+        Path(data_dir, "encoding-inputs", f"{sub_name}_stim_features.npy")
+    )
+
+    cat53_stim_mask_ = [True if sv in cat_dict.keys() else False for sv in stim_vec]
+    cat53_X = X_matrix[cat53_stim_mask_]
+
+    cat53_dense_labels_ = []
+    for sv in stim_vec[cat53_stim_mask_]:
+        cat53_dense_labels_.append(cat_dict.get(sv))
+
+    mlb = MultiLabelBinarizer().fit(cat53_dense_labels_)
+    cat53_y = mlb.transform(cat53_dense_labels_)
+
+    groups = []
+    X = []
+    y = []
+    for grp_lbl in range(53):
+        for y_, X_ in zip(cat53_y, cat53_X):
+            if y_[grp_lbl] == 1:
+                X.append(X_)
+                y.append(y_)
+                groups.append(grp_lbl + 1)
+
+    X = np.asarray(X)
+    y = np.asarray(y)
+    groups = np.asarray(groups)
+
+    return X, y, groups
+
+
 def explainable_variance(y_matrix, bias_correction=True, do_zscore=True):
     """
     Adapted from gallantlab/himalaya
@@ -237,7 +301,9 @@ def explainable_variance(y_matrix, bias_correction=True, do_zscore=True):
     return expl_var
 
 
-def ridgeCV_sklearn(X_matrix, y_matrix, groups=None, scoring=r2_score):
+def ridgeCV_sklearn(
+    X_matrix, y_matrix, groups=None, scoring=r2_score, cv_strategy="image"
+):
     """
     Parameters
     ----------
@@ -249,10 +315,11 @@ def ridgeCV_sklearn(X_matrix, y_matrix, groups=None, scoring=r2_score):
         Expected shape (n_samples, n_features, n_repeats)
     groups : np.arr
         Group labels for outer_cv, should correspond to image
-        identity or image category.
+        identity or image categor(ies).
         Expected shape (n_samples, )
     scoring : Callable
         Scoring function for estimator predictions.
+    cv_strategy : str
     """
     from sklearn.linear_model import RidgeCV
 
@@ -263,7 +330,10 @@ def ridgeCV_sklearn(X_matrix, y_matrix, groups=None, scoring=r2_score):
     if groups is None:
         outer_cv = KFold(shuffle=True, random_state=0)
     else:
-        outer_cv = GroupKFold(shuffle=True, random_state=0)
+        if cv_strategy == "image":
+            outer_cv = GroupKFold(shuffle=True, random_state=0)
+        elif cv_strategy == "multilabel":
+            outer_cv = LeaveOneGroupOut()
     alphas = np.logspace(1, 20, 20)
     estimator = RidgeCV(
         alphas=alphas,
@@ -287,7 +357,9 @@ def ridgeCV_sklearn(X_matrix, y_matrix, groups=None, scoring=r2_score):
     return scores
 
 
-def ridgeCV_himalaya(X_matrix, y_matrix, groups=None, scoring=r2_score):
+def ridgeCV_himalaya(
+    X_matrix, y_matrix, groups=None, scoring=r2_score, cv_strategy="image"
+):
     """
     Parameters
     ----------
@@ -303,6 +375,7 @@ def ridgeCV_himalaya(X_matrix, y_matrix, groups=None, scoring=r2_score):
         Expected shape (n_samples, )
     scoring : Callable
         Scoring function for estimator predictions.
+    cv_strategy : str
     """
     from himalaya.ridge import RidgeCV
     from himalaya.backend import set_backend
@@ -317,7 +390,10 @@ def ridgeCV_himalaya(X_matrix, y_matrix, groups=None, scoring=r2_score):
     if groups is None:
         outer_cv = KFold(shuffle=True, random_state=0)
     else:
-        outer_cv = GroupKFold(shuffle=True, random_state=0)
+        if cv_strategy == "image":
+            outer_cv = GroupKFold(shuffle=True, random_state=0)
+        elif cv_strategy == "multilabel":
+            outer_cv = LeaveOneGroupOut()
 
     alphas = np.logspace(1, 20, 20)
     pl = make_pipeline(
@@ -391,13 +467,15 @@ def main(sub_name, roi, cv_strategy, scoring_metric, average, data_dir, engine):
         err_msg = f"Unrecognized subject {sub_name}"
         raise ValueError(err_msg)
 
-    cv_strategies = ["image", "category", "kfold"]
+    cv_strategies = ["image", "category", "kfold", "multilabel"]
     if cv_strategy not in cv_strategies:
         err_msg = f"Unrecognized cross-validation strategy {cv_strategy}"
         raise ValueError(err_msg)
 
-    if average and (cv_strategy == "image"):
-        err_msg = "Cross-validation strategy 'image' is not compatible with 'average'"
+    if average and (cv_strategy in ["image", "multilabel"]):
+        err_msg = (
+            f"Cross-validation strategy {cv_strategy} is not compatible with 'average'"
+        )
         raise ValueError(err_msg)
 
     scoring_metrics = ["r2_score", "correlation_score"]
@@ -419,8 +497,26 @@ def main(sub_name, roi, cv_strategy, scoring_metric, average, data_dir, engine):
     if roi is not None:
         raise NotImplementedError
 
+    X_matrix = np.load(
+        Path(data_dir, "encoding-inputs", f"{sub_name}_stim_features.npy")
+    )
+    mask = nib.load(Path(data_dir, "encoding-inputs", f"{sub_name}_brain_mask.nii.gz"))
+
+    if roi is not None:
+        y_matrix = np.load(
+            Path(data_dir, "encoding-inputs", f"{sub_name}_{roi}_brain_responses.npy")
+        )
+    else:
+        y_matrix = np.load(
+            Path(data_dir, "encoding-inputs", f"{sub_name}_brain_responses.npy")
+        )
+
+    expl_var = explainable_variance(y_matrix)
+
     if cv_strategy == "kfold":
         groups = None
+    if cv_strategy == "multilabel":
+        X_matrix, y_matrix, groups = THINGSPlus_logo(sub_name, data_dir)
     else:
         # Note that "category" will return `incl_labels` corresponding
         # to image categories (e.g., 'acorn')
@@ -439,22 +535,6 @@ def main(sub_name, roi, cv_strategy, scoring_metric, average, data_dir, engine):
         dtype=np.str_,
     )
     ####################################
-    X_matrix = np.load(
-        Path(data_dir, "encoding-inputs", f"{sub_name}_stim_features.npy")
-    )
-    mask = nib.load(Path(data_dir, "encoding-inputs", f"{sub_name}_brain_mask.nii.gz"))
-
-    if roi is not None:
-        y_matrix = np.load(
-            Path(data_dir, "encoding-inputs", f"{sub_name}_{roi}_brain_responses.npy")
-        )
-    else:
-        y_matrix = np.load(
-            Path(data_dir, "encoding-inputs", f"{sub_name}_brain_responses.npy")
-        )
-
-    expl_var = explainable_variance(y_matrix)
-
     if average:
         # NOTE: shapes hard-coded for three repetitions, 4174 images, THINGS dataset
         if groups is not None:
@@ -465,11 +545,15 @@ def main(sub_name, roi, cv_strategy, scoring_metric, average, data_dir, engine):
         )
 
     if engine == "sklearn":
-        scores = ridgeCV_sklearn(X_matrix, y_matrix, groups=groups, scoring=scoring)
+        scores = ridgeCV_sklearn(
+            X_matrix, y_matrix, groups=groups, scoring=scoring, cv_strategy=cv_strategy
+        )
         best_alphas = [estim.alpha_ for estim in scores["estimator"]]
         best_scores = [estim.best_score_ for estim in scores["estimator"]]
     elif engine == "himalaya":
-        scores = ridgeCV_himalaya(X_matrix, y_matrix, groups=groups, scoring=scoring)
+        scores = ridgeCV_himalaya(
+            X_matrix, y_matrix, groups=groups, scoring=scoring, cv_strategy=cv_strategy
+        )
         best_alphas = [best_alpha_.cpu() for best_alpha_ in scores["best_alphas"]]
         best_scores = [best_score_.cpu() for best_score_ in scores["best_scores"]]
 

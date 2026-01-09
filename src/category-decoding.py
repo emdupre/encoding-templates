@@ -2,12 +2,11 @@ import json
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 from sklearn.svm import LinearSVC
 from sklearn.multioutput import ClassifierChain
 from sklearn.multiclass import OneVsRestClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import train_test_split, LeaveOneGroupOut
+from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MultiLabelBinarizer
 from sklearn.metrics import (
     accuracy_score,
@@ -116,95 +115,3 @@ def pred_THINGSPlus_categories(sub_name, data_dir):
     )  # 0.786
 
     return cfm, ovr_score, chain_scores, ensemble_score
-
-
-def gen_THINGSPlus_categories(sub_name, data_dir):
-    """
-    Parameters
-    ----------
-    sub_name : str
-    data_dir : str
-    """
-    annot_fname = f"{sub_name}_task-things_desc-perTrial_annotation.tsv"
-
-    annot_df = pd.read_csv(Path(data_dir, "annot", annot_fname), sep="\t")
-    annot_df = annot_df.loc[annot_df["exclude_session"] == False]
-    annot_df = annot_df.loc[annot_df["atypical"] == False]
-
-    cat53_mask = annot_df[annot_df["highercat53_names"] != "[]"].index
-    image_names = annot_df["image_name"][cat53_mask]
-
-    cat53_names = annot_df["highercat53_names"][cat53_mask].str.replace(
-        r"'|\]|\[", "", regex=True
-    )
-    sanitized_ = []
-    for cat in cat53_names.values:
-        list_labels = cat.split(",")
-        sanitized_.append([l.strip() for l in list_labels])
-
-    cat_dict = dict(zip(image_names, pd.Series(sanitized_)))
-    # NOTE : this is consolidating duplicate keys
-    with open(
-        Path(data_dir, "encoding-inputs", "category53_mapping.json"),
-        "w",
-        encoding="utf8",
-    ) as outfile:
-        json.dump(cat_dict, outfile)
-
-    return cat_dict
-
-
-def gen_THINGSPlus_groups(sub_name, data_dir, cat_dict=None, n_splits=5):
-    """
-    Note
-    ----
-    The resulting train, test splits will be of unequal sizes ;
-    that is, images that are not labelled "animal" may also be not labelled
-    "breakfast food," and so assigned to the training split multiple times.
-    The resulting distribution of labels is known to have a significant
-    rightward-skew given the pre-existing label distribution (i.e., the category
-    "animal" is more likely to occur overall).
-    """
-    # NOTE : this is consolidating duplicate keys
-    with open(Path(data_dir, "encoding-inputs", "category53_mapping.json")) as f:
-        cat_dict = json.load(f)
-
-    stim_vec = np.loadtxt(
-        Path(data_dir, "encoding-inputs", f"{sub_name}_stim_labels.txt"),
-        dtype=np.str_,
-    )
-    X_matrix = np.load(
-        Path(data_dir, "encoding-inputs", f"{sub_name}_stim_features.npy")
-    )
-
-    cat53_stim_mask_ = [True if sv in cat_dict.keys() else False for sv in stim_vec]
-    cat53_X = X_matrix[cat53_stim_mask_]
-
-    cat53_dense_labels_ = []
-    for sv in stim_vec[cat53_stim_mask_]:
-        cat53_dense_labels_.append(cat_dict.get(sv))
-
-    mlb = MultiLabelBinarizer().fit(cat53_dense_labels_)
-    cat53_y = mlb.transform(cat53_dense_labels_)
-
-    groups = []
-    X = []
-    y = []
-    for grp_lbl in range(53):
-        for y_, X_ in zip(cat53_y, cat53_X):
-            if y_[grp_lbl] == 1:
-                groups.append(grp_lbl + 1)
-                y.append(y_)
-                X.append(X_)
-
-    groups = np.asarray(groups)
-    X = np.asarray(X)
-    y = np.asarray(y)
-
-    logo = LeaveOneGroupOut()
-    for i, (train_index, test_index) in enumerate(logo.split(X, y, groups)):
-        print(f"Fold {i}:")
-        print(f"  Train: index={train_index}, group={groups[train_index]}")
-        print(f"  Test:  index={test_index}, group={groups[test_index]}")
-
-    return
