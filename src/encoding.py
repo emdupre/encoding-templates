@@ -40,6 +40,7 @@ def plot_flatmap(
     lh, rh = cortex.get_hemi_masks(subject=sub_name, xfmname="align_auto")
 
     avg_best_score = np.mean(best_scores, axis=0)  # TODO: FIXME
+    print(avg_best_score.shape)
     nii = masking.unmask(avg_best_score, mask_img)
 
     # https://gallantlab.org/pycortex/auto_examples/datasets/plot_vertex.html
@@ -197,7 +198,7 @@ def plot_voxel_hist(
     return fig
 
 
-def THINGSPlus_logo(sub_name, data_dir):
+def THINGSPlus_logo(cat53_X, cat53_y):
     """
     Parameters
     ----------
@@ -220,43 +221,21 @@ def THINGSPlus_logo(sub_name, data_dir):
     rightward-skew given the pre-existing label distribution (i.e., the category
     "animal" is more likely to occur overall).
     """
-    # NOTE : this is consolidating duplicate keys
-    with open(Path(data_dir, "encoding-inputs", "category53_mapping.json")) as f:
-        cat_dict = json.load(f)
-
-    stim_vec = np.loadtxt(
-        Path(data_dir, "encoding-inputs", f"{sub_name}_stim_labels.txt"),
-        dtype=np.str_,
-    )
-    X_matrix = np.load(
-        Path(data_dir, "encoding-inputs", f"{sub_name}_stim_features.npy")
-    )
-
-    cat53_stim_mask_ = [True if sv in cat_dict.keys() else False for sv in stim_vec]
-    cat53_X = X_matrix[cat53_stim_mask_]
-
-    cat53_dense_labels_ = []
-    for sv in stim_vec[cat53_stim_mask_]:
-        cat53_dense_labels_.append(cat_dict.get(sv))
-
-    mlb = MultiLabelBinarizer().fit(cat53_dense_labels_)
-    cat53_y = mlb.transform(cat53_dense_labels_)
-
     groups = []
     X = []
-    y = []
+    y_idx = []
     for grp_lbl in range(53):
-        for y_, X_ in zip(cat53_y, cat53_X):
+        for idx, (y_, X_) in enumerate(zip(cat53_y, cat53_X)):
             if y_[grp_lbl] == 1:
                 X.append(X_)
-                y.append(y_)
+                y_idx.append(idx)
                 groups.append(grp_lbl + 1)
 
     X = np.asarray(X)
-    y = np.asarray(y)
+    y_idx = np.asarray(y_idx)
     groups = np.asarray(groups)
 
-    return X, y, groups
+    return X, y_idx, groups
 
 
 def explainable_variance(y_matrix, bias_correction=True, do_zscore=True):
@@ -472,7 +451,7 @@ def main(sub_name, roi, cv_strategy, scoring_metric, average, data_dir, engine):
         err_msg = f"Unrecognized cross-validation strategy {cv_strategy}"
         raise ValueError(err_msg)
 
-    if average and (cv_strategy in ["image", "multilabel"]):
+    if average and (cv_strategy == "image"):
         err_msg = (
             f"Cross-validation strategy {cv_strategy} is not compatible with 'average'"
         )
@@ -515,8 +494,6 @@ def main(sub_name, roi, cv_strategy, scoring_metric, average, data_dir, engine):
 
     if cv_strategy == "kfold":
         groups = None
-    if cv_strategy == "multilabel":
-        X_matrix, y_matrix, groups = THINGSPlus_logo(sub_name, data_dir)
     else:
         # Note that "category" will return `incl_labels` corresponding
         # to image categories (e.g., 'acorn')
@@ -528,6 +505,26 @@ def main(sub_name, roi, cv_strategy, scoring_metric, average, data_dir, engine):
         )
         if cv_strategy == "category":
             groups = np.asarray([g.rsplit("_", 1)[0] for g in groups])
+
+        if cv_strategy == "multilabel":
+            # NOTE : this is consolidating duplicate keys
+            with open(
+                Path(data_dir, "encoding-inputs", "category53_mapping.json")
+            ) as f:
+                cat_dict = json.load(f)
+
+            cat53_stim_mask_ = [True if g in cat_dict.keys() else False for g in groups]
+            cat53_X = X_matrix[cat53_stim_mask_]
+
+            cat53_dense_labels_ = []
+            for sv in groups[cat53_stim_mask_]:
+                cat53_dense_labels_.append(cat_dict.get(sv))
+
+            mlb = MultiLabelBinarizer().fit(cat53_dense_labels_)
+            cat53_y = mlb.transform(cat53_dense_labels_)
+
+            X_matrix, y_idx, groups = THINGSPlus_logo(cat53_X, cat53_y)
+            y_matrix = y_matrix[cat53_stim_mask_][y_idx]
     ####################################
     # FIXME
     inner_groups = np.loadtxt(
