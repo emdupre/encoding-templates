@@ -40,7 +40,6 @@ def plot_flatmap(
     lh, rh = cortex.get_hemi_masks(subject=sub_name, xfmname="align_auto")
 
     avg_best_score = np.mean(best_scores, axis=0)  # TODO: FIXME
-    print(avg_best_score.shape)
     nii = masking.unmask(avg_best_score, mask_img)
 
     # https://gallantlab.org/pycortex/auto_examples/datasets/plot_vertex.html
