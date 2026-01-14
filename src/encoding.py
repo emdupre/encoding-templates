@@ -509,7 +509,7 @@ def main(sub_name, roi, cv_strategy, scoring_metric, average, data_dir, engine):
         if cv_strategy == "multilabel":
             # NOTE : this is consolidating duplicate keys
             with open(
-                Path(data_dir, "encoding-inputs", "category53_mapping.json")
+                Path(data_dir, "encoding-inputs", f"{sub_name}_category53_mapping.json")
             ) as f:
                 cat_dict = json.load(f)
 

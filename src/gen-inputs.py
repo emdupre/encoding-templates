@@ -154,7 +154,7 @@ def _clean_inputs(stim_arr, y_arr, y_labels, x_arr, x_labels):
     return sorted_stim, incl_y_arr, incl_y_labels, incl_x_arr
 
 
-def gen_THINGSPlus_categories(sub_name, data_dir):
+def _category_mapping(sub_name, data_dir):
     """
     Parameters
     ----------
@@ -178,14 +178,8 @@ def gen_THINGSPlus_categories(sub_name, data_dir):
         list_labels = cat.split(",")
         sanitized_.append([l.strip() for l in list_labels])
 
-    cat_dict = dict(zip(image_names, pd.Series(sanitized_)))
     # NOTE : this is consolidating duplicate keys
-    with open(
-        Path(data_dir, "encoding-inputs", "category53_mapping.json"),
-        "w",
-        encoding="utf8",
-    ) as outfile:
-        json.dump(cat_dict, outfile)
+    cat_dict = dict(zip(image_names, pd.Series(sanitized_)))
 
     return cat_dict
 
@@ -211,7 +205,9 @@ def gen_inputs(sub_name, roi, data_dir):
         clip_fnames,
     )
 
-    return stim_vec, y_matrix, y_sessions, X_matrix, mask
+    cat_dict = _category_mapping(sub_name, data_dir)
+
+    return stim_vec, y_matrix, y_sessions, X_matrix, mask, cat_dict
 
 
 @click.command()
@@ -237,7 +233,9 @@ def main(sub_name, roi, data_dir):
         err_msg = f"Unrecognized subject {sub_name}"
         raise ValueError(err_msg)
 
-    stim_vec, y_matrix, y_sessions, X_matrix, mask = gen_inputs(sub_name, roi, data_dir)
+    stim_vec, y_matrix, y_sessions, X_matrix, mask, cat_dict = gen_inputs(
+        sub_name, roi, data_dir
+    )
 
     out_stim = Path(data_dir, "encoding-inputs", f"{sub_name}_stim_labels.txt")
     if not out_stim.is_file():
@@ -274,8 +272,11 @@ def main(sub_name, roi, data_dir):
         out_mask.parent.mkdir(exist_ok=True, parents=True)
         nib.save(mask, out_mask)
 
-    # TODO, FIXME
-    gen_THINGSPlus_categories(sub_name, data_dir)
+    out_dict = Path(data_dir, "encoding-inputs", f"{sub_name}_category53_mapping.json")
+    if not out_dict.is_file():
+        out_dict.parent.mkdir(exist_ok=True, parents=True)
+        with open(out_dict, "w", encoding="utf8") as f:
+            json.dump(cat_dict, f)
 
 
 if __name__ == "__main__":
