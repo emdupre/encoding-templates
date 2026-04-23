@@ -3,7 +3,7 @@
 #SBATCH --gpus-per-node=h100_3g.40gb:1
 #SBATCH --array=0-3
 #SBATCH --time=00:25:00
-#SBATCH --account=rrg-pbellec
+#SBATCH --account=def-pbellec
 #SBATCH --job-name=things-encode
 
 module load apptainer/1.3.4

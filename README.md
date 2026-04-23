@@ -23,7 +23,7 @@ then, we can confirm it can access the GPU in a Rorqual HPC interactive job with
 ```
 module load apptainer/1.3.4
 module load cuda
-salloc --account=<RRG-ACCOUNT> --gpus-per-node=h100_3g.40gb:1 --time=00:05:00 --mem=1G
+salloc --account=<DEF-ACCOUNT> --gpus-per-node=h100_3g.40gb:1 --time=00:05:00 --mem=1G
 
 nvidia-smi
 apptainer test --nv things-apptainer.sif

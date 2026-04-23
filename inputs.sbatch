@@ -3,9 +3,9 @@
 #SBATCH --mem=64G
 #SBATCH --array=0-3
 #SBATCH --time=00:10:00
-#SBATCH --account=rrg-pbellec
+#SBATCH --account=def-pbellec
 
-PROJECT=$HOME/links/projects/rrg-pbellec/emdupre/things.betas
+PROJECT=$HOME/links/projects/def-pbellec/emdupre/things.betas
 subjects=("sub-01" "sub-02" "sub-03" "sub-06")
 
 source $PROJECT/things.env/bin/activate
