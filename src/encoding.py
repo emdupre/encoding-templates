@@ -13,12 +13,7 @@ import sklearn
 from himalaya.scoring import correlation_score
 from nilearn import masking
 from sklearn.metrics import make_scorer, r2_score
-from sklearn.model_selection import (
-    GroupKFold,
-    KFold,
-    LeaveOneGroupOut,
-    cross_validate,
-)
+from sklearn.model_selection import GroupKFold, KFold, LeaveOneGroupOut, cross_validate
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import MultiLabelBinarizer, StandardScaler
 
@@ -70,12 +65,12 @@ def plot_flatmap(
         out_name,
         vol,
         sampler="trilinear",
-        # curv_brightness=1.0,
+        curv_brightness=1.0,
         with_colorbar=True,
         colorbar_location="left",
         with_curvature=True,
         with_labels=False,
-        with_rois=False,
+        with_rois=True,
         dpi=300,
         height=2048,
     )
@@ -490,7 +485,7 @@ def ridgeCV_himalaya(
     "--engine",
     default="himalaya",
     help="Engine for running encoding analyses. Must be either 'sklearn' "
-    "'rrr' or 'himalaya'. Note only the latter is GPU compatiable.",
+    "or 'himalaya'. Note only the latter is GPU compatiable.",
 )
 def main(sub_name, roi, cv_strategy, scoring_metric, average, data_dir, engine):
     """ """
@@ -541,11 +536,7 @@ def main(sub_name, roi, cv_strategy, scoring_metric, average, data_dir, engine):
 
     if roi is not None:
         y_matrix = np.load(
-            Path(
-                data_dir,
-                "encoding-inputs",
-                f"{sub_name}_{roi}_brain_responses.npy",
-            )
+            Path(data_dir, "encoding-inputs", f"{sub_name}_{roi}_brain_responses.npy")
         )
     else:
         y_matrix = np.load(
@@ -571,11 +562,7 @@ def main(sub_name, roi, cv_strategy, scoring_metric, average, data_dir, engine):
         if cv_strategy == "multilabel":
             # NOTE : this is consolidating duplicate keys
             with open(
-                Path(
-                    data_dir,
-                    "encoding-inputs",
-                    f"{sub_name}_category53_mapping.json",
-                )
+                Path(data_dir, "encoding-inputs", f"{sub_name}_category53_mapping.json")
             ) as f:
                 cat_dict = json.load(f)
 
@@ -609,11 +596,7 @@ def main(sub_name, roi, cv_strategy, scoring_metric, average, data_dir, engine):
 
     if engine == "sklearn":
         scores = ridgeCV_sklearn(
-            X_matrix,
-            y_matrix,
-            groups=groups,
-            scoring=scoring,
-            cv_strategy=cv_strategy,
+            X_matrix, y_matrix, groups=groups, scoring=scoring, cv_strategy=cv_strategy
         )
         best_alphas = [estim.alpha_ for estim in scores["estimator"]]
         best_scores = [estim.best_score_ for estim in scores["estimator"]]
@@ -630,11 +613,7 @@ def main(sub_name, roi, cv_strategy, scoring_metric, average, data_dir, engine):
         best_scores = [estim.best_score_ for estim in scores["estimator"]]
     elif engine == "himalaya":
         scores = ridgeCV_himalaya(
-            X_matrix,
-            y_matrix,
-            groups=groups,
-            scoring=scoring,
-            cv_strategy=cv_strategy,
+            X_matrix, y_matrix, groups=groups, scoring=scoring, cv_strategy=cv_strategy
         )
         best_alphas = [best_alpha_.cpu() for best_alpha_ in scores["best_alphas"]]
         best_scores = [best_score_.cpu() for best_score_ in scores["best_scores"]]
