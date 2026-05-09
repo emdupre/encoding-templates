@@ -1,23 +1,28 @@
 import json
 import pickle
-from pathlib import Path
 from collections import defaultdict
+from pathlib import Path
 
 import click
-import scipy
 import cortex
-import sklearn
-import numpy as np
-import nibabel as nib
-from nilearn import masking
 import matplotlib.pyplot as plt
-from sklearn.pipeline import make_pipeline
+import nibabel as nib
+import numpy as np
+import scipy
+import sklearn
 from himalaya.scoring import correlation_score
-from sklearn.preprocessing import StandardScaler
+from nilearn import masking
 from sklearn.metrics import make_scorer, r2_score
-from sklearn.preprocessing import MultiLabelBinarizer
-from sklearn.model_selection import cross_validate, KFold, GroupKFold, LeaveOneGroupOut
+from sklearn.model_selection import (
+    GroupKFold,
+    KFold,
+    LeaveOneGroupOut,
+    cross_validate,
+)
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import MultiLabelBinarizer, StandardScaler
 
+from rrr import ReducedRankRidgeRegressionCV
 
 # os.environ["PATH"] += ":/Applications/Inkscape.app/Contents/MacOS/"
 
@@ -335,6 +340,61 @@ def ridgeCV_sklearn(
     return scores
 
 
+def ridgeCV_rrr(
+    X_matrix, y_matrix, ranks, groups=None, scoring=r2_score, cv_strategy="image"
+):
+    """
+    Parameters
+    ----------
+    X_matrix : np.arr
+        Training data for stimulus embeddings.
+        Expected shape (n_samples, n_features)
+    y_matrix : np.arr
+        Training data for brain responses
+        Expected shape (n_samples, n_features, n_repeats)
+    ranks : int or list of int
+        Rank(s) for the reduced-rank ridge regression estimator.
+    groups : np.arr
+        Group labels for outer_cv, should correspond to image
+        identity or image categor(ies).
+        Expected shape (n_samples, )
+    scoring : Callable
+        Scoring function for estimator predictions.
+    cv_strategy : str
+    """
+    scaler = StandardScaler(with_mean=True, with_std=False)
+    scaler.fit_transform(X_matrix)
+    scaler.fit_transform(y_matrix)
+
+    if groups is None:
+        outer_cv = KFold(shuffle=True, random_state=0)
+    else:
+        if cv_strategy == "image":
+            outer_cv = GroupKFold(shuffle=True, random_state=0)
+        elif cv_strategy == "multilabel":
+            outer_cv = LeaveOneGroupOut()
+    alphas = np.logspace(1, 20, 20)
+    estimator = ReducedRankRidgeRegressionCV(
+        alphas=alphas,
+        ranks=ranks,
+    )
+    scorer = make_scorer(scoring)
+    sklearn.set_config(enable_metadata_routing=True)
+
+    scores = cross_validate(
+        estimator,
+        X_matrix,
+        y=y_matrix,
+        cv=outer_cv,
+        scoring=scorer,
+        params={"groups": groups} if groups is not None else None,
+        return_estimator=True,
+        return_indices=True,
+        error_score="raise",
+    )
+    return scores
+
+
 def ridgeCV_himalaya(
     X_matrix, y_matrix, groups=None, scoring=r2_score, cv_strategy="image"
 ):
@@ -355,8 +415,8 @@ def ridgeCV_himalaya(
         Scoring function for estimator predictions.
     cv_strategy : str
     """
-    from himalaya.ridge import RidgeCV
     from himalaya.backend import set_backend
+    from himalaya.ridge import RidgeCV
 
     backend = set_backend("torch_cuda", on_error="warn")
 
@@ -385,7 +445,6 @@ def ridgeCV_himalaya(
     )
 
     for train_index, test_index in outer_cv.split(X_matrix, y_matrix, groups):
-
         train_indices.append(train_index)
         test_indices.append(test_index)
 
@@ -431,7 +490,7 @@ def ridgeCV_himalaya(
     "--engine",
     default="himalaya",
     help="Engine for running encoding analyses. Must be either 'sklearn' "
-    "or 'himalaya'. Note only the latter is GPU compatiable.",
+    "'rrr' or 'himalaya'. Note only the latter is GPU compatiable.",
 )
 def main(sub_name, roi, cv_strategy, scoring_metric, average, data_dir, engine):
     """ """
@@ -482,7 +541,11 @@ def main(sub_name, roi, cv_strategy, scoring_metric, average, data_dir, engine):
 
     if roi is not None:
         y_matrix = np.load(
-            Path(data_dir, "encoding-inputs", f"{sub_name}_{roi}_brain_responses.npy")
+            Path(
+                data_dir,
+                "encoding-inputs",
+                f"{sub_name}_{roi}_brain_responses.npy",
+            )
         )
     else:
         y_matrix = np.load(
@@ -508,7 +571,11 @@ def main(sub_name, roi, cv_strategy, scoring_metric, average, data_dir, engine):
         if cv_strategy == "multilabel":
             # NOTE : this is consolidating duplicate keys
             with open(
-                Path(data_dir, "encoding-inputs", f"{sub_name}_category53_mapping.json")
+                Path(
+                    data_dir,
+                    "encoding-inputs",
+                    f"{sub_name}_category53_mapping.json",
+                )
             ) as f:
                 cat_dict = json.load(f)
 
@@ -542,13 +609,43 @@ def main(sub_name, roi, cv_strategy, scoring_metric, average, data_dir, engine):
 
     if engine == "sklearn":
         scores = ridgeCV_sklearn(
-            X_matrix, y_matrix, groups=groups, scoring=scoring, cv_strategy=cv_strategy
+            X_matrix,
+            y_matrix,
+            groups=groups,
+            scoring=scoring,
+            cv_strategy=cv_strategy,
+        )
+        best_alphas = [estim.alpha_ for estim in scores["estimator"]]
+        best_scores = [estim.best_score_ for estim in scores["estimator"]]
+    elif engine == "rrr":
+        scores = ridgeCV_rrr(
+            X_matrix,
+            y_matrix,
+            ranks=[2**i for i in range(10)],
+            groups=groups,
+            scoring=scoring,
+            cv_strategy=cv_strategy,
+        )
+        best_alphas = [estim.alpha_ for estim in scores["estimator"]]
+        best_scores = [estim.best_score_ for estim in scores["estimator"]]
+    elif engine == "rrr":
+        scores = ridgeCV_rrr(
+            X_matrix,
+            y_matrix,
+            ranks=[2**i for i in range(10)],
+            groups=groups,
+            scoring=scoring,
+            cv_strategy=cv_strategy,
         )
         best_alphas = [estim.alpha_ for estim in scores["estimator"]]
         best_scores = [estim.best_score_ for estim in scores["estimator"]]
     elif engine == "himalaya":
         scores = ridgeCV_himalaya(
-            X_matrix, y_matrix, groups=groups, scoring=scoring, cv_strategy=cv_strategy
+            X_matrix,
+            y_matrix,
+            groups=groups,
+            scoring=scoring,
+            cv_strategy=cv_strategy,
         )
         best_alphas = [best_alpha_.cpu() for best_alpha_ in scores["best_alphas"]]
         best_scores = [best_score_.cpu() for best_score_ in scores["best_scores"]]
